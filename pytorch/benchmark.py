@@ -1,4 +1,6 @@
+import argparse
 import time
+import warnings
 from typing import Dict, Tuple
 
 import torch
@@ -11,14 +13,12 @@ class CUDNNBenchmark:
     def __init__(
         self,
         model: nn.Module,
+        use_cpu: bool = False,
         batch_size: int = 640,
         warmup_steps: int = 1000,
         benchmark_steps: int = 50,
     ):
-        # Check CUDA availability first
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available. This benchmark requires CUDA.")
-
+        print(f"Using GPU: {not use_cpu}")
         # Initialize CUDA context
         torch.cuda.init()
 
@@ -30,8 +30,10 @@ class CUDNNBenchmark:
         self.steps = 10
         self.dry_runs = 10
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = model.to(device)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() and not use_cpu else "cpu"
+        )
+        self.model = model.to(self.device)
         self.model.train()
 
         self._configure_cudnn()
@@ -68,7 +70,7 @@ class CUDNNBenchmark:
 
     def _makeInput(self, input_size: Tuple) -> torch.Tensor:
         """Similar to makeInput function in original"""
-        input_tensor = torch.randn(input_size).cuda()
+        input_tensor = torch.randn(input_size).to(self.device)
         input_tensor.requires_grad = True
         return input_tensor
 
@@ -195,12 +197,17 @@ class CUDNNBenchmark:
 
 
 if __name__ == "__main__":
+    warnings.filterwarnings("ignore", category=UserWarning)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use-cpu", action="store_true")
+    args = parser.parse_args()
+
     models = {
         "alexnet": models.alexnet(weights=models.AlexNet_Weights.DEFAULT),
         "vgg_a": models.vgg11_bn(weights=models.VGG11_BN_Weights.DEFAULT),
         "googlenet": models.googlenet(weights=models.GoogLeNet_Weights.DEFAULT),
     }
 
-    benchmark = CUDNNBenchmark(model=models["alexnet"])
+    benchmark = CUDNNBenchmark(model=models["alexnet"], use_cpu=args.use_cpu)
     results = benchmark.run_benchmark()
     print(results)
