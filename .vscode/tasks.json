@@ -6,6 +6,7 @@
             "label": "C/C++: g++ build active file",
             "command": "/usr/bin/g++",
             "args": [
+                "-ldnnl",
                 "-fdiagnostics-color=always",
                 "-g",
                 "${workspaceFolder}/cudnn/cpu/benchmark.cpp",
@@ -37,6 +38,7 @@
                 "'-fPIC'",
                 "cudnn/gpu/benchmark.cu",
                 "cudnn/gpu/alexnet.cu",
+                "cudnn/gpu/conv_layer.cu",
                 "-o",
                 "cudnn/gpu_trainer",
                 "-lcudnn",
