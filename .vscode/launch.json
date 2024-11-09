@@ -11,6 +11,38 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": "${command:pickArgs}"
+        },
+        {
+            // CUDA Debug for GPU trainer
+            "name": "CUDA Debug",
+            "type": "cuda-gdb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cudnn/gpu_trainer",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "CUDA: nvcc debug build"
+        },
+        {
+            // C++ Debug
+            "name": "C++ Debug",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/cudnn/cpu_trainer",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/cudnn/",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "C/C++: g++ build active file",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

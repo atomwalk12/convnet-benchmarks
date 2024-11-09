@@ -1,0 +1,58 @@
+{
+    "tasks": [
+        {
+            // C++ build
+            "type": "cppbuild",
+            "label": "C/C++: g++ build active file",
+            "command": "/usr/bin/g++",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "${workspaceFolder}/cudnn/cpu/benchmark.cpp",
+                "-o",
+                "${workspaceFolder}/cudnn/cpu_trainer"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/cudnn/"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Task for C++ files"
+        },
+        {
+            // CUDA build for GPU trainer
+            "type": "cppbuild",
+            "label": "CUDA: nvcc debug build",
+            "command": "nvcc",
+            "args": [
+                "-g", 
+                "-G",
+                "-O0",
+                "--compiler-options",
+                "'-fPIC'",
+                "cudnn/gpu/benchmark.cu",
+                "cudnn/gpu/alexnet.cu",
+                "-o",
+                "cudnn/gpu_trainer",
+                "-lcudnn",
+                "-lineinfo"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$nvcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "detail": "Task for CUDA debugging"
+        }
+    ]
+}
