@@ -45,7 +45,8 @@ class CUDNNBenchmark:
         """Run the benchmark and return timing results"""
         input_tensor = self._makeInput(self._get_input_size())
 
-        # Perform dry runs to warm up
+        # Perform dry runs to warm up. This ensures that the subsequent operations
+        # don't perform poorly due to initialization overhead.
         self._dry_run(input_tensor)
 
         # Time forward pass and get output for backward passes
@@ -101,7 +102,9 @@ class CUDNNBenchmark:
             # loss = output.sum()
             # loss.backward()
 
-            # Create a dummy gradient for the output
+            # Create a dummy gradient for the output.
+            # This is equivalent to dL/dNet and since this calculates the gradient
+            # for the output, it must be equal to 1.
             grad_output = torch.ones_like(output)
 
             # Compute input gradients (equivalent to updateGradInput)
@@ -117,10 +120,10 @@ class CUDNNBenchmark:
                 outputs=output, inputs=self.model.parameters(), grad_outputs=grad_output
             )
 
-            # Synchronize GPU (equivalent to cutorch.synchronize())
+            # equivalent to cutorch.synchronize()
             torch.cuda.synchronize()
 
-            # Clean memory (equivalent to collectgarbage())
+            # equivalent to collectgarbage()
             torch.cuda.empty_cache()
 
     def _time_forward(self, input_tensor: torch.Tensor) -> Tuple[float, torch.Tensor]:
@@ -197,6 +200,7 @@ class CUDNNBenchmark:
 
 
 if __name__ == "__main__":
+    """This script follows the same structural style as torch7/imagenet_winners/benchmark.lua"""
     warnings.filterwarnings("ignore", category=UserWarning)
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-cpu", action="store_true")
