@@ -2,6 +2,10 @@
 #include "alexnet.h"
 #include <chrono>
 
+// Benchmark parameters
+const int NUM_ITERATIONS = 100;
+const int WARMUP_ITERATIONS = 1;
+
 void checkCUDNN(cudnnStatus_t status) {
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("cuDNN Error: %s\n", cudnnGetErrorString(status));
@@ -24,6 +28,9 @@ int main() {
     const int num_classes = 1000;
 
     // These vectors will be initialized with random values
+    // ================================
+    // =====      Input data      =====
+    // ================================
     float *input_data, *output_data;
     cudaMallocManaged(&input_data, batch_size*channels*height*width*sizeof(float));
     cudaMallocManaged(&output_data, batch_size*num_classes*sizeof(float));
@@ -37,22 +44,77 @@ int main() {
     }
 
     // Create and initialize the AlexNet model
-    AlexNet model(cudnn, batch_size);
+    AlexNet model(cudnn, batch_size, num_classes);
 
-    // Warmup run
-    model.forward(input_data, output_data);
+    // Create dummy gradient for backward pass
+    float* output_gradient = model.createDummyGradient(output_data);
+    float* input_gradient;
+    cudaMallocManaged(&input_gradient, batch_size*channels*height*width*sizeof(float));
     cudaDeviceSynchronize();
 
-    // Timing the forward pass
+    // ================================
+    // =====      Warmup run      =====
+    // ================================
+    for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+        model.forward(input_data, output_data);
+        model.backwardInput(input_gradient, output_gradient);
+        model.backwardParams(input_data, output_gradient);
+    }
+    cudaDeviceSynchronize();
+
+    // ================================
+    // =====      Timing run      =====
+    // ================================
+    // =====     Forward pass     =====
+    // ================================
     begin = std::chrono::steady_clock::now();
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
         model.forward(input_data, output_data);
     }
     cudaDeviceSynchronize();
     end = std::chrono::steady_clock::now();
 
-    double forward_time = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / 100000.0;
-    printf("Average forward pass time: %f ms\n", forward_time);
+    double total_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    double average_milliseconds = (total_microseconds / 1000.0) / NUM_ITERATIONS;
+    double total_time = average_milliseconds;
+    printf("Average forward pass time: %f ms\n", average_milliseconds);
+
+    // ================================
+    // ====     Backward pass     =====
+    // ================================
+    // ===== Backward input pass ======
+    // ================================
+    begin = std::chrono::steady_clock::now();
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
+        model.backwardInput(input_gradient, output_gradient);
+    }
+    cudaDeviceSynchronize();
+    end = std::chrono::steady_clock::now();
+    
+    total_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    average_milliseconds = (total_microseconds / 1000.0) / NUM_ITERATIONS;
+    total_time += average_milliseconds;
+    printf("Average backward input pass time: %f ms\n", average_milliseconds);
+    
+    // ================================
+    // ===== Backward params pass =====
+    // ================================
+    begin = std::chrono::steady_clock::now();
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
+        model.backwardParams(input_data, output_gradient);
+    }
+    cudaDeviceSynchronize();
+    end = std::chrono::steady_clock::now();
+    
+    total_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    average_milliseconds = (total_microseconds / 1000.0) / NUM_ITERATIONS;
+    total_time += average_milliseconds;
+    printf("Average backward params pass time: %f ms\n", average_milliseconds);
+    printf("Total time: %f ms\n", total_time);
+
+    // Additional cleanup
+    cudaFree(input_gradient);
+    cudaFree(output_gradient);
 
     // Cleanup
     cudaFree(input_data);
