@@ -39,9 +39,25 @@ int main() {
     // Create and initialize the AlexNet model
     AlexNet model(cudnn, batch_size);
 
+    // Warmup run
+    model.forward(input_data, output_data);
+    cudaDeviceSynchronize();
+
+    // Timing the forward pass
+    begin = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; i++) {
+        model.forward(input_data, output_data);
+    }
+    cudaDeviceSynchronize();
+    end = std::chrono::steady_clock::now();
+
+    double forward_time = std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / 100000.0;
+    printf("Average forward pass time: %f ms\n", forward_time);
+
     // Cleanup
     cudaFree(input_data);
     cudaFree(output_data);
+    cudnnDestroy(cudnn);
 
     return 0;
 }
