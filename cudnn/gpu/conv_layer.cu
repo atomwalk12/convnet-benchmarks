@@ -114,16 +114,35 @@ void ConvolutionLayer::createDescriptors() {
     debugDescriptor("Input", input_descriptor);
     debugDescriptor("Output", output_descriptor);
     debugFilterDescriptor(filter_descriptor);
+
+    // Debug print first few weights
+    float debug_weights[10];
+    cudaMemcpy(debug_weights, weights, 10 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("First 10 weights: ");
+    for(int i = 0; i < 10; i++) {
+        printf("%.4f ", debug_weights[i]);
+    }
+    printf("\n");
     fflush(stdout);
 }
 
 void ConvolutionLayer::forward(float* input, float* output) {
+    // Debug print first few input values
+    float debug_input[10];
+    cudaMemcpy(debug_input, input, 10 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("First 10 inputs: ");
+    for(int i = 0; i < 10; i++) {
+        printf("%.4f ", debug_input[i]);
+    }
+    printf("\n");
+    fflush(stdout);
+    
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
     // Implements: y = w ⊗ x
     // To simplify things, biases are ignored
-    cudnnConvolutionForward(
+    cudnnStatus_t status = cudnnConvolutionForward(
         cudnn,
         &alpha,
         input_descriptor,
@@ -135,9 +154,27 @@ void ConvolutionLayer::forward(float* input, float* output) {
         nullptr,  // workspace (we should add this as a class member)
         0,        // workspace size
         &beta,
-        input_descriptor,
+        output_descriptor,
         output
     );
+    if (status != CUDNN_STATUS_SUCCESS) {
+        printf("CUDNN forward failed: %s\n", cudnnGetErrorString(status));
+    }
+    
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+    }
+
+    // Debug print first few output values
+    printf("First 10 outputs: ");
+    float debug_output[10];
+    cudaMemcpy(debug_output, output, 10 * sizeof(float), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < 10; i++) {
+        printf("%.4f ", debug_output[i]);
+    }
+    printf("\n");
+    fflush(stdout);
 }
 
 void ConvolutionLayer::destroyDescriptors() {
@@ -150,25 +187,61 @@ void ConvolutionLayer::destroyDescriptors() {
 }
 
 void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradient) {
+    // First verify pointers
+    if (input_gradient == nullptr || output_gradient == nullptr) {
+        printf("Error: Null pointer passed to backwardInput\n");
+        return;
+    }
+
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    // Implements: dL/dx = w ⊗ (dL/dy)
-    cudnnConvolutionBackwardData(
+    // Debug print input gradients
+    float debug_outgrad[10];
+    cudaMemcpy(debug_outgrad, output_gradient, 10 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("First 10 output gradients: ");
+    for(int i = 0; i < 10; i++) {
+        printf("%.4f ", debug_outgrad[i]);
+    }
+    printf("\n");
+    fflush(stdout);
+
+    // Backward pass with different algorithm
+    cudnnStatus_t status = cudnnConvolutionBackwardData(
         cudnn,
         &alpha,
-        filter_descriptor,  // w descriptor
-        weights,            // w
-        input_descriptor,   // dy descriptor
-        output_gradient,    // dy
-        conv_descriptor,    // convolution descriptor
-        CUDNN_CONVOLUTION_BWD_DATA_ALGO_0,
-        nullptr,           // workspace
-        0,                 // workspace size
+        filter_descriptor,
+        weights,
+        output_descriptor,
+        output_gradient,
+        conv_descriptor,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,  // Changed algorithm
+        nullptr,
+        0,
         &beta,
-        input_descriptor,  // dx descriptor
-        input_gradient     // dx
+        input_descriptor,
+        input_gradient
     );
+
+    if (status != CUDNN_STATUS_SUCCESS) {
+        printf("Backward data failed: %s\n", cudnnGetErrorString(status));
+    }
+
+    // Debug print output
+    float debug_ingrad[10];
+    cudaMemcpy(debug_ingrad, input_gradient, 10 * sizeof(float), cudaMemcpyDeviceToHost);
+    printf("First 10 input gradients after backward: ");
+    for(int i = 0; i < 10; i++) {
+        printf("%.4f ", debug_ingrad[i]);
+    }
+    printf("\n");
+    fflush(stdout);
+
+    // Check for any CUDA errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error after backward: %s\n", cudaGetErrorString(err));
+    }
 }
 
 void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
@@ -181,7 +254,7 @@ void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
         &alpha,
         input_descriptor,    // x descriptor
         input,               // x
-        input_descriptor,    // dy descriptor
+        output_descriptor,   // dy descriptor
         output_gradient,     // dy
         conv_descriptor,     // convolution descriptor
         CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0,

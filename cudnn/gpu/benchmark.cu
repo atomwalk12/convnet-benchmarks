@@ -33,13 +33,14 @@ int main() {
     // ================================
     float *input_data, *output_data;
     cudaMallocManaged(&input_data, batch_size*channels*height*width*sizeof(float));
-    cudaMallocManaged(&output_data, batch_size*num_classes*sizeof(float));
+    int temp =  batch_size * 96 * 54 * 54;
+    cudaMallocManaged(&output_data, temp * sizeof(float));// TODO batch_size*num_classes*sizeof(float));
 
     for (int i = 0; i < batch_size * channels * height * width; i++) {
         input_data[i] = (float)rand() / RAND_MAX;
     }
 
-    for (int i = 0; i < batch_size * num_classes; i++) {
+    for (int i = 0; i < temp; i++) { // TODO batch_size * num_classes; i++) {
         output_data[i] = 0.0f;
     }
 
