@@ -63,7 +63,7 @@ int main() {
     cudaDeviceSynchronize();
 
     // ================================
-    // =====      Timing run      =====
+    // =====      Timing run      ===== 
     // ================================
     // =====     Forward pass     =====
     // ================================
@@ -79,8 +79,6 @@ int main() {
     double total_time = average_milliseconds;
     printf("Average forward pass time: %f ms\n", average_milliseconds);
 
-    // ================================
-    // ====     Backward pass     =====
     // ================================
     // ===== Backward input pass ======
     // ================================
