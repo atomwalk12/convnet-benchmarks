@@ -1,12 +1,15 @@
-#ifndef CUDNN_UTILS_H
-#define CUDNN_UTILS_H
+#ifndef UTILS_H
+#define UTILS_H
 
 #include <cudnn.h>
 
-// Debug function for tensor descriptors
+// Debug configuration
+extern bool ENABLE_DEBUG_OUTPUT;  // Declaration
+
+// Existing function declarations
 void debugDescriptor(const char* name, cudnnTensorDescriptor_t desc);
-
-// Debug function for filter descriptors
 void debugFilterDescriptor(cudnnFilterDescriptor_t desc);
+void debugTensorValues(const char* label, float* device_ptr, int count);
+void checkWeightChanges(const char* label, float* device_weights, int size);
 
-#endif // CUDNN_UTILS_H 
+#endif // UTILS_H 
