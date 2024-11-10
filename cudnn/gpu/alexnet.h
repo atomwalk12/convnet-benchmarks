@@ -21,11 +21,8 @@ private:
     cudnnHandle_t& cudnn;
     int batch_size;
     
-    // Vector to store all layers
     std::vector<Layer*> layers;
-    
-    // Intermediate outputs between layers
-    std::vector<float*> layer_outputs;
+    std::vector<float*> layer_outputs; // outputs between layers
 
     int output_size;
 };

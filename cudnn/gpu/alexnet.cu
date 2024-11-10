@@ -11,8 +11,6 @@ void AlexNet::createNetwork() {
     layers.push_back(new ConvolutionLayer(cudnn, batch_size, 3, 96, 11, 4, 0));
     
     // Allocate memory for intermediate outputs
-    // We'll need to calculate the output size for each layer
-    // This is a placeholder - actual sizes need to be computed
     layer_outputs.push_back(nullptr);  // Will be set in forward pass
 }
 
@@ -28,7 +26,7 @@ void AlexNet::forward(float *inp, float *out) {
 
 float* AlexNet::createDummyGradient(float* output) {
     // Create a gradient of ones, similar to PyTorch's ones_like
-    size_t output_dim = batch_size * output_size; // hardcoded for now, should match output size
+    size_t output_dim = batch_size * output_size;
     float* gradient;
     cudaMallocManaged(&gradient, output_dim * sizeof(float));
     
@@ -68,12 +66,10 @@ void AlexNet::backwardParams(float* inp, float* out_grad) {
 }
 
 AlexNet::~AlexNet() {
-    // Delete all layers
     for (Layer* layer : layers) {
         delete layer;
     }
     
-    // Free intermediate outputs
     for (float* output : layer_outputs) {
         if (output != nullptr) {
             cudaFree(output);
