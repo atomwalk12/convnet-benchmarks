@@ -1,89 +1,82 @@
 #include "alexnet.h"
 #include <cstdlib>
 
-AlexNet::AlexNet(cudnnHandle_t& handle, int batch_size) 
-    : cudnn(handle), batch_size(batch_size) {
+AlexNet::AlexNet(cudnnHandle_t& handle, int batch_size, int num_classes) 
+    : cudnn(handle), batch_size(batch_size), output_size(num_classes) {
     createNetwork();
 }
 
 void AlexNet::createNetwork() {
-    // Create network following AlexNet architecture
-    // First convolution layer: 96 kernels of 11x11
-    createConv1();
-    createPool1();
-    // ... other layers will follow
-}
-
-void AlexNet::createConv1() {
-    // First convolution layer setup
-    cudnnCreateTensorDescriptor(&input_descriptor);
-    cudnnSetTensor4dDescriptor(
-        input_descriptor,
-        CUDNN_TENSOR_NCHW,    // format
-        CUDNN_DATA_FLOAT,     // dataType
-        batch_size,           // N
-        3,                    // C
-        224,                  // H
-        224                   // W
-    );
+    // First convolution layer: 96 kernels of 11x11, stride 4
+    layers.push_back(new ConvolutionLayer(cudnn, batch_size, 3, 96, 11, 4, 0));
     
-    // Filter descriptor (96 kernels of 11x11)
-    cudnnCreateFilterDescriptor(&conv1_filter_descriptor);
-    cudnnSetFilter4dDescriptor(
-        conv1_filter_descriptor,
-        CUDNN_DATA_FLOAT,
-        CUDNN_TENSOR_NCHW,
-        96,                    // Number of output feature maps
-        3,                     // Number of input feature maps
-        11,                    // Filter height
-        11                     // Filter width
-    );
-
-    // Convolution descriptor
-    cudnnCreateConvolutionDescriptor(&conv1_descriptor);
-    cudnnSetConvolution2dDescriptor(
-        conv1_descriptor,
-        0,                     // Zero-padding height
-        0,                     // Zero-padding width
-        4,                     // Vertical stride
-        4,                     // Horizontal stride
-        1,                     // Vertical dilation
-        1,                     // Horizontal dilation
-        CUDNN_CROSS_CORRELATION,
-        CUDNN_DATA_FLOAT
-    );
-
-    // Allocate memory for weights and bias
-    size_t weight_size = 96 * 3 * 11 * 11 * sizeof(float);
-    cudaMallocManaged(&conv1_weights, weight_size);
-    cudaMallocManaged(&conv1_bias, 96 * sizeof(float));
-
-    // Initialize weights with random values
-    for (size_t i = 0; i < weight_size/sizeof(float); i++) {
-        conv1_weights[i] = (float)rand() / RAND_MAX;
-    }
-    
-    // Initialize bias to zero
-    for (int i = 0; i < 96; i++) {
-        conv1_bias[i] = 0.0f;
-    }
+    // Allocate memory for intermediate outputs
+    // We'll need to calculate the output size for each layer
+    // This is a placeholder - actual sizes need to be computed
+    layer_outputs.push_back(nullptr);  // Will be set in forward pass
 }
 
 void AlexNet::forward(float *inp, float *out) {
-    // Forward pass implementation
+    float* current_input = inp;
+    
+    for (size_t i = 0; i < layers.size(); i++) {
+        float* current_output = (i == layers.size() - 1) ? out : layer_outputs[i];
+        layers[i]->forward(current_input, current_output);
+        current_input = current_output;
+    }
 }
 
-void AlexNet::createPool1() {
-    // Pooling layer setup
+float* AlexNet::createDummyGradient(float* output) {
+    // Create a gradient of ones, similar to PyTorch's ones_like
+    size_t output_dim = batch_size * output_size; // hardcoded for now, should match output size
+    float* gradient;
+    cudaMallocManaged(&gradient, output_dim * sizeof(float));
+    
+    for (size_t i = 0; i < output_dim; i++) {
+        gradient[i] = 1.0f;
+    }
+    return gradient;
+}
+
+void AlexNet::backwardInput(float* inp_grad, float* out_grad) {
+    float* current_output_grad = out_grad;
+    
+    // Backward pass through layers in reverse order
+    for (int i = layers.size() - 1; i >= 0; i--) {
+        ConvolutionLayer* conv_layer = static_cast<ConvolutionLayer*>(layers[i]);
+        float* current_input_grad = (i == 0) ? inp_grad : layer_outputs[i-1];
+        conv_layer->backwardInput(current_input_grad, current_output_grad);
+        current_output_grad = current_input_grad;
+    }
+}
+
+void AlexNet::backwardParams(float* inp, float* out_grad) {
+    float* current_input = inp;
+    float* current_output_grad = out_grad;
+    
+    // Compute parameter gradients for each layer
+    for (int i = layers.size() - 1; i >= 0; i--) {
+        ConvolutionLayer* conv_layer = static_cast<ConvolutionLayer*>(layers[i]);
+        conv_layer->backwardParams(current_input, current_output_grad);
+        
+        // Update input and gradient for next layer
+        if (i > 0) {
+            current_input = layer_outputs[i-1];
+            current_output_grad = layer_outputs[i-1]; // This will be overwritten by backwardInput
+        }
+    }
 }
 
 AlexNet::~AlexNet() {
-    // Destroy descriptors
-    cudnnDestroyTensorDescriptor(input_descriptor);
-    cudnnDestroyFilterDescriptor(conv1_filter_descriptor);
-    cudnnDestroyConvolutionDescriptor(conv1_descriptor);
+    // Delete all layers
+    for (Layer* layer : layers) {
+        delete layer;
+    }
     
-    // Free memory
-    cudaFree(conv1_weights);
-    cudaFree(conv1_bias);
+    // Free intermediate outputs
+    for (float* output : layer_outputs) {
+        if (output != nullptr) {
+            cudaFree(output);
+        }
+    }
 }
