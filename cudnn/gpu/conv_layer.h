@@ -2,6 +2,7 @@
 #define CONV_LAYER_H
 
 #include "layer.h"
+#include <cublas_v2.h>
 
 class ConvolutionLayer : public Layer {
 public:
@@ -18,8 +19,14 @@ public:
     void forward(float* input, float* output) override;
     void backwardInput(float* input_gradient, float* output_gradient);
     void backwardParams(float* input, float* output_gradient);
-    void updateWeights(float learning_rate) override;
     void destroyDescriptors() override;
+    void zeroGradients() override;
+
+    float* getWeights() { return weights; }
+    float* getWeightGradients() { return weight_gradients; }
+    int getWeightSize() { 
+        return out_channels * in_channels * kernel_size * kernel_size; 
+    }
 
 private:
     int batch_size, in_channels, out_channels;
@@ -34,6 +41,8 @@ private:
     
     float *weights, *bias;
     float *weight_gradients, *bias_gradients;
+    
+    cublasHandle_t cublas_handle;
 };
 
 #endif // CONV_LAYER_H 

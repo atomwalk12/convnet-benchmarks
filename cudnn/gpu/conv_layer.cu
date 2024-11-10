@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "conv_layer.h"
 #include <stdio.h>
+#include <cublas_v2.h>
 
 ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
                                  int batch_size,
@@ -17,12 +18,14 @@ ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
       stride(stride),
       padding(padding) {
     createDescriptors();
+    // Initialize cublas
+    cublasCreate(&cublas_handle);
 }
 
 void ConvolutionLayer::createDescriptors() {
     // Add these as class members to track dimensions
-    input_height = 224;  // Add to header
-    input_width = 224;   // Add to header
+    input_height = 9;
+    input_width = 9;
     
     // Input descriptor
     cudnnCreateTensorDescriptor(&input_descriptor);
@@ -30,10 +33,7 @@ void ConvolutionLayer::createDescriptors() {
         input_descriptor,
         CUDNN_TENSOR_NCHW,
         CUDNN_DATA_FLOAT,
-        batch_size,
-        in_channels,
-        input_height,
-        input_width
+        batch_size, in_channels, input_height, input_width
     );
 
     // Filter descriptor
@@ -42,10 +42,7 @@ void ConvolutionLayer::createDescriptors() {
         filter_descriptor,
         CUDNN_DATA_FLOAT,
         CUDNN_TENSOR_NCHW,
-        out_channels,
-        in_channels,
-        kernel_size,
-        kernel_size
+        out_channels, in_channels, kernel_size, kernel_size
     );
 
     // Convolution descriptor
@@ -84,16 +81,12 @@ void ConvolutionLayer::createDescriptors() {
         output_descriptor,
         CUDNN_TENSOR_NCHW,
         CUDNN_DATA_FLOAT,
-        out_n,
-        out_c,
-        out_h,
-        out_w
+        batch_size, out_channels, output_height, output_width
     );
 
     // Allocate and initialize weights and biases
     size_t weight_size = out_channels * in_channels * kernel_size * kernel_size * sizeof(float);
     cudaMallocManaged(&weights, weight_size);
-    cudaMallocManaged(&bias, out_channels * sizeof(float));
     cudaMallocManaged(&weight_gradients, weight_size);
 
     // Initialize weights with random values
@@ -101,10 +94,6 @@ void ConvolutionLayer::createDescriptors() {
         weights[i] = (float)rand() / RAND_MAX;
     }
 
-    // Initialize bias to zero
-    for (int i = 0; i < out_channels; i++) {
-        bias[i] = 0.0f;
-    }
 
     // Debug print
     printf("Input dimensions: %dx%dx%dx%d\n", batch_size, in_channels, input_height, input_width);
@@ -116,26 +105,12 @@ void ConvolutionLayer::createDescriptors() {
     debugFilterDescriptor(filter_descriptor);
 
     // Debug print first few weights
-    float debug_weights[10];
-    cudaMemcpy(debug_weights, weights, 10 * sizeof(float), cudaMemcpyDeviceToHost);
-    printf("First 10 weights: ");
-    for(int i = 0; i < 10; i++) {
-        printf("%.4f ", debug_weights[i]);
-    }
-    printf("\n");
-    fflush(stdout);
+    debugTensorValues("weights", weights, 10);
 }
 
 void ConvolutionLayer::forward(float* input, float* output) {
-    // Debug print first few input values
-    float debug_input[10];
-    cudaMemcpy(debug_input, input, 10 * sizeof(float), cudaMemcpyDeviceToHost);
-    printf("First 10 inputs: ");
-    for(int i = 0; i < 10; i++) {
-        printf("%.4f ", debug_input[i]);
-    }
-    printf("\n");
-    fflush(stdout);
+    // Debug input values
+    debugTensorValues("input", input, 10);
     
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -166,15 +141,8 @@ void ConvolutionLayer::forward(float* input, float* output) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
 
-    // Debug print first few output values
-    printf("First 10 outputs: ");
-    float debug_output[10];
-    cudaMemcpy(debug_output, output, 10 * sizeof(float), cudaMemcpyDeviceToHost);
-    for(int i = 0; i < 10; i++) {
-        printf("%.4f ", debug_output[i]);
-    }
-    printf("\n");
-    fflush(stdout);
+    // Debug output values
+    debugTensorValues("output", output, 10);
 }
 
 void ConvolutionLayer::destroyDescriptors() {
@@ -187,27 +155,50 @@ void ConvolutionLayer::destroyDescriptors() {
 }
 
 void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradient) {
-    // First verify pointers
-    if (input_gradient == nullptr || output_gradient == nullptr) {
-        printf("Error: Null pointer passed to backwardInput\n");
+    // Debug output gradient values
+    debugTensorValues("output gradient", output_gradient, 10);
+    
+    // Verify pointers
+    if (input_gradient == nullptr || output_gradient == nullptr || weights == nullptr) {
+        printf("Error: Null pointer in backwardInput\n");
         return;
     }
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    // Debug print input gradients
-    float debug_outgrad[10];
-    cudaMemcpy(debug_outgrad, output_gradient, 10 * sizeof(float), cudaMemcpyDeviceToHost);
-    printf("First 10 output gradients: ");
-    for(int i = 0; i < 10; i++) {
-        printf("%.4f ", debug_outgrad[i]);
+    // Get workspace size needed
+    size_t workspace_size = 0;
+    cudnnStatus_t status = cudnnGetConvolutionBackwardDataWorkspaceSize(
+        cudnn,
+        filter_descriptor,
+        output_descriptor,
+        conv_descriptor,
+        input_descriptor,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,
+        &workspace_size
+    );
+
+    if (status != CUDNN_STATUS_SUCCESS) {
+        printf("Error getting workspace size: %s\n", cudnnGetErrorString(status));
+        return;
     }
-    printf("\n");
-    fflush(stdout);
+
+    printf("Backward Data workspace size: %.2f MB\n", workspace_size / (1024.0 * 1024.0));
+
+    // Allocate workspace
+    void* workspace = nullptr;
+    if (workspace_size > 0) {
+        cudaError_t err = cudaMalloc(&workspace, workspace_size);
+        if (err != cudaSuccess) {
+            printf("Workspace allocation failed: %s\n", cudaGetErrorString(err));
+            return;
+        }
+    }
 
     // Backward pass with different algorithm
-    cudnnStatus_t status = cudnnConvolutionBackwardData(
+    // Implements: dL/dx = (dL/dy) @ w
+    status = cudnnConvolutionBackwardData(
         cudnn,
         &alpha,
         filter_descriptor,
@@ -215,9 +206,9 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
         output_descriptor,
         output_gradient,
         conv_descriptor,
-        CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,  // Changed algorithm
-        nullptr,
-        0,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,
+        workspace,        // Added workspace
+        workspace_size,   // Added workspace size
         &beta,
         input_descriptor,
         input_gradient
@@ -227,54 +218,70 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
         printf("Backward data failed: %s\n", cudnnGetErrorString(status));
     }
 
-    // Debug print output
-    float debug_ingrad[10];
-    cudaMemcpy(debug_ingrad, input_gradient, 10 * sizeof(float), cudaMemcpyDeviceToHost);
-    printf("First 10 input gradients after backward: ");
-    for(int i = 0; i < 10; i++) {
-        printf("%.4f ", debug_ingrad[i]);
+    // Free workspace
+    if (workspace) {
+        cudaFree(workspace);
     }
-    printf("\n");
-    fflush(stdout);
 
-    // Check for any CUDA errors
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA error after backward: %s\n", cudaGetErrorString(err));
-    }
+    // Debug input gradient values
+    debugTensorValues("input gradient", input_gradient, 10);
 }
 
 void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
+    // Debug input and gradient values
+    debugTensorValues("input", input, 10);
+    debugTensorValues("output gradient", output_gradient, 10);
+    
+    // First verify pointers
+    if (input == nullptr || output_gradient == nullptr || weight_gradients == nullptr) {
+        printf("Error: Null pointer passed to backwardParams\n");
+        return;
+    }
+    // Zero out gradients before computing new ones
+    size_t weight_size = out_channels * in_channels * kernel_size * kernel_size;
+    cudaMemset(weight_gradients, 0, weight_size * sizeof(float));
+
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
     // Implements: dL/dW = x ⊗ (dL/dy)
-    cudnnConvolutionBackwardFilter(
+    cudnnStatus_t status = cudnnConvolutionBackwardFilter(
         cudnn,
         &alpha,
-        input_descriptor,    // x descriptor
-        input,               // x
-        output_descriptor,   // dy descriptor
-        output_gradient,     // dy
-        conv_descriptor,     // convolution descriptor
+        input_descriptor,
+        input,
+        output_descriptor,
+        output_gradient,
+        conv_descriptor,
         CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0,
-        nullptr,            // workspace
-        0,                  // workspace size
+        nullptr,
+        0,
         &beta,
-        filter_descriptor,  // dw descriptor
-        weight_gradients    // dw
+        filter_descriptor,
+        weight_gradients
     );
+
+    if (status != CUDNN_STATUS_SUCCESS) {
+        printf("Backward filter failed: %s\n", cudnnGetErrorString(status));
+    }
+
+    // Check for any CUDA errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error after backward filter: %s\n", cudaGetErrorString(err));
+    }
+
+    // Debug weight gradients
+    debugTensorValues("weight gradients", weight_gradients, 10);
 }
 
-void ConvolutionLayer::updateWeights(float learning_rate) {
-    // Simple SGD update
-    int weight_size = out_channels * in_channels * kernel_size * kernel_size;
-    for(int i = 0; i < weight_size; i++) {
-        weights[i] -= learning_rate * weight_gradients[i];
-    }
+void ConvolutionLayer::zeroGradients() {
+    cudaMemset(weight_gradients, 0, getWeightSize() * sizeof(float));
 }
 
 ConvolutionLayer::~ConvolutionLayer() {
     destroyDescriptors();
+    // Destroy cublas handle
+    cublasDestroy(cublas_handle);
 }
 
