@@ -4,7 +4,7 @@
 
 // Benchmark parameters
 const int NUM_ITERATIONS = 100;
-const int WARMUP_ITERATIONS = 1;
+const int WARMUP_ITERATIONS = 10;
 
 void checkCUDNN(cudnnStatus_t status) {
     if (status != CUDNN_STATUS_SUCCESS) {
@@ -57,9 +57,16 @@ int main() {
     // =====      Warmup run      =====
     // ================================
     for (int i = 0; i < WARMUP_ITERATIONS; i++) {
+        // Zero gradients before each iteration
+        model.zeroGradients();
+
+        // Training step
         model.forward(input_data, output_data);
         model.backwardInput(input_gradient, output_gradient);
         model.backwardParams(input_data, output_gradient);
+
+        // Update weights
+        model.updateWeights(0.001f);
     }
     cudaDeviceSynchronize();
 
