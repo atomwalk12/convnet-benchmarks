@@ -39,6 +39,7 @@
                 "cudnn/gpu/benchmark.cu",
                 "cudnn/gpu/alexnet.cu",
                 "cudnn/gpu/conv_layer.cu",
+                "cudnn/gpu/utils.cu",
                 "-o",
                 "cudnn/gpu_trainer",
                 "-lcudnn",
