@@ -1,14 +1,17 @@
 #include "alexnet.h"
 #include <cstdlib>
+#include "utils.h"
 
 AlexNet::AlexNet(cudnnHandle_t& handle, int batch_size, int num_classes) 
     : cudnn(handle), batch_size(batch_size), output_size(num_classes) {
+    cublasCreate(&cublas);
     createNetwork();
 }
 
 void AlexNet::createNetwork() {
     // First convolution layer: 96 kernels of 11x11, stride 4
-    layers.push_back(new ConvolutionLayer(cudnn, batch_size, 3, 96, 11, 4, 0));
+    // TODO: this does not reflect the actual AlexNet architecture
+    layers.push_back(new ConvolutionLayer(cudnn, batch_size, 3, 96, 3, 1, 1));
     
     // Allocate memory for intermediate outputs
     // Get the output dimensions from the layer
@@ -78,7 +81,32 @@ void AlexNet::backwardParams(float* inp, float* out_grad) {
     }
 }
 
+void AlexNet::updateWeights(float learning_rate) {
+    float lr = -learning_rate;  // Negative because cublasSaxpy does addition
+
+    for (int i = layers.size() - 1; i >= 0; i--) {
+        ConvolutionLayer* conv = static_cast<ConvolutionLayer*>(layers[i]);
+        // Update conv1 weights
+        cublasSaxpy(cublas,
+                    conv->getWeightSize(),
+                    &lr,
+                    conv->getWeightGradients(), 1,
+                    conv->getWeights(), 1);
+
+        checkWeightChanges("Conv1", conv->getWeights(), conv->getWeightSize());
+    }
+}
+
+void AlexNet::zeroGradients() {
+    for (Layer* layer : layers) {
+        layer->zeroGradients();
+    }
+}
+
 AlexNet::~AlexNet() {
+    // Destroy cublas handle
+    cublasDestroy(cublas);
+    
     for (Layer* layer : layers) {
         delete layer;
     }

@@ -2,6 +2,7 @@
 #define ALEXNET_H
 
 #include <cudnn.h>
+#include <cublas_v2.h>
 #include <vector>
 #include "layer.h"
 #include "conv_layer.h"
@@ -16,9 +17,12 @@ public:
     float* createDummyGradient(float* output);
     void backwardInput(float *inp_grad, float *out_grad);
     void backwardParams(float *inp, float *out_grad);
+    void updateWeights(float learning_rate);
+    void zeroGradients();
     
 private:
     cudnnHandle_t& cudnn;
+    cublasHandle_t cublas;
     int batch_size;
     
     std::vector<Layer*> layers;

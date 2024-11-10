@@ -43,6 +43,7 @@
                 "-o",
                 "cudnn/gpu_trainer",
                 "-lcudnn",
+                "-lcublas",
                 "-lineinfo"
             ],
             "options": {
