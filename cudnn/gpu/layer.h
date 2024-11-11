@@ -1,6 +1,8 @@
 #ifndef LAYER_H
 #define LAYER_H
 
+#include <cudnn.h>
+
 class Layer {
 public:
     Layer(cudnnHandle_t& cudnn_handle) : cudnn(cudnn_handle) {}
@@ -13,7 +15,6 @@ public:
     virtual void destroyDescriptors() = 0;
     virtual void zeroGradients() = 0;
     
-    // Weight access for optimizer
     virtual float* getWeights() = 0;
     virtual float* getWeightGradients() = 0;
     virtual int getWeightSize() = 0;
