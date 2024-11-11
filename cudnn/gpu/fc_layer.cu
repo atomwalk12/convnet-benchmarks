@@ -100,6 +100,12 @@ void FCLayer::backwardInput(float* input_gradient, float* output_gradient) {
         printf("CUBLAS error: %s\n", cublasGetStatusString(status));
         exit(1);
     }
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+        exit(1);
+    }
 }
 
 void FCLayer::backwardParams(float* input, float* output_gradient) {
@@ -116,7 +122,7 @@ void FCLayer::backwardParams(float* input, float* output_gradient) {
     printf("weight_gradients pointer: %p\n", weight_gradients);
     fflush(stdout);
     // Perform matrix multiplication: weight_gradients = output_gradient * input^T
-    // https://www-inf.telecom-sudparis.eu/COURS/IA307/IA307-course4-IntroductionToCuBLAS.pdf
+    // See https://docs.nvidia.com/cuda/cublas/ -> cublasSgemm
     cublasStatus_t status = cublasSgemm(cublas_handle,
                 CUBLAS_OP_N,
                 CUBLAS_OP_N,
@@ -134,6 +140,12 @@ void FCLayer::backwardParams(float* input, float* output_gradient) {
 
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("CUBLAS error: %s\n", cublasGetStatusString(status));
+        exit(1);
+    }
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
         exit(1);
     }
 }
