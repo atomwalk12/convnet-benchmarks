@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "alexnet.h"
 #include <chrono>
+#include "loss.h"
 
 // Benchmark parameters
 const int NUM_ITERATIONS = 100;
@@ -25,7 +26,7 @@ int main() {
     const int channels = 3;       // C
     const int height = 224;       // H
     const int width = 224;        // W
-    const int num_classes = 1000;
+    const int num_classes = 10;
 
     // These vectors will be initialized with random values
     // ================================
@@ -56,20 +57,38 @@ int main() {
     // ================================
     // =====      Warmup run      =====
     // ================================
+    // MSELoss loss;
+    
+    // Target data still needs size, but we get it from the model
+    float* target_data;
+    int output_size = model.getOutputSize();
+    cudaMalloc(&target_data, output_size * sizeof(float));
+    
     for (int i = 0; i < WARMUP_ITERATIONS; i++) {
-        // Zero gradients before each iteration
         model.zeroGradients();
-
-        // Training step
+        
+        // Forward pass
         model.forward(input_data, output_data);
+        
+        // Compute loss and gradients
+        // float loss_value = loss.compute(output_data, target_data, output_size);
+        //loss.backward(output_data, target_data, output_gradient, output_size);
+        
+        // Backward pass
         model.backwardInput(input_gradient, output_gradient);
         model.backwardParams(input_data, output_gradient);
-
+        
         // Update weights
         model.updateWeights(0.001f);
+        
+        //printf("Iteration %d, Loss: %f\n", i, loss_value);
     }
+
     cudaDeviceSynchronize();
 
+    // Cleanup
+    cudaFree(target_data);
+    
     // ================================
     // =====      Timing run      ===== 
     // ================================
