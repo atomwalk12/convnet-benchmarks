@@ -85,9 +85,10 @@ void ConvolutionLayer::createDescriptors() {
     );
 
     // Allocate and initialize weights and biases
-    size_t weight_size = out_channels * in_channels * kernel_size * kernel_size * sizeof(float);
+    size_t weight_size = getWeightSize() * sizeof(float);
     cudaMallocManaged(&weights, weight_size);
     cudaMallocManaged(&weight_gradients, weight_size);
+
 
     // Initialize weights with random values
     for (size_t i = 0; i < weight_size/sizeof(float); i++) {
@@ -134,11 +135,13 @@ void ConvolutionLayer::forward(float* input, float* output) {
     );
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("CUDNN forward failed: %s\n", cudnnGetErrorString(status));
+        exit(1);
     }
     
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
+        exit(1);
     }
 
     // Debug output values
@@ -216,6 +219,13 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
 
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("Backward data failed: %s\n", cudnnGetErrorString(status));
+        exit(1);
+    }
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+        exit(1);
     }
 
     // Free workspace
@@ -238,8 +248,8 @@ void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
         return;
     }
     // Zero out gradients before computing new ones
-    size_t weight_size = out_channels * in_channels * kernel_size * kernel_size;
-    cudaMemset(weight_gradients, 0, weight_size * sizeof(float));
+    // TODO to delete
+    // zeroGradients();
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -263,12 +273,14 @@ void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
 
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("Backward filter failed: %s\n", cudnnGetErrorString(status));
+        exit(1);
     }
 
     // Check for any CUDA errors
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error after backward filter: %s\n", cudaGetErrorString(err));
+        exit(1);
     }
 
     // Debug weight gradients
