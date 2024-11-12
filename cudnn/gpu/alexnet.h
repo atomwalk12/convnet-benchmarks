@@ -1,18 +1,22 @@
-#ifndef ALEXNET_H
-#define ALEXNET_H
+#ifndef NETWORK_H
+#define NETWORK_H
 
 #include <cudnn.h>
 #include <cublas_v2.h>
 #include <vector>
 #include "layer.h"
 #include "conv_layer.h"
+#include "fc_layer.h"
 
-class AlexNet {
+class Network {
 public:
-    AlexNet(cudnnHandle_t& handle, int batch_size, int output_size);
-    ~AlexNet();
+    Network(cudnnHandle_t& handle, int batch_size, int num_classes);
+    ~Network();
     
-    void createNetwork();
+    void addConvLayer(int width, int height, int in_channels, int out_channels, 
+                     int kernel_size, int stride, int padding);
+    void addFCLayer(int in_features, int out_features);
+    
     void forward(float *inp, float *out);
     float* createDummyGradient(float* output);
     void backwardInput(float *inp_grad, float *out_grad);
@@ -20,15 +24,20 @@ public:
     void updateWeights(float learning_rate);
     void zeroGradients();
     
+    int getOutputSize() const {
+        return batch_size_ * num_classes_;
+    }
+    
 private:
     cudnnHandle_t& cudnn;
     cublasHandle_t cublas;
-    int batch_size;
     
     std::vector<Layer*> layers;
-    std::vector<float*> layer_outputs; // outputs between layers
+    std::vector<float*> layer_outputs;    // outputs between layers
+    std::vector<float*> gradient_outputs; // gradients between layers
 
-    int output_size;
+    int batch_size_;
+    int num_classes_;
 };
 
-#endif // ALEXNET_H 
+#endif // NETWORK_H 

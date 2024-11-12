@@ -2,48 +2,26 @@
 #include <cstdlib>
 #include "utils.h"
 
-AlexNet::AlexNet(cudnnHandle_t& handle, int batch_size, int num_classes) 
-    : cudnn(handle), batch_size(batch_size), output_size(num_classes) {
+Network::Network(cudnnHandle_t& handle, int batch_size, int num_classes_) 
+    : cudnn(handle), batch_size_(batch_size), num_classes_(num_classes_) {
     cublasCreate(&cublas);
-    createNetwork();
 }
 
-void AlexNet::createNetwork() {
-    // First convolution layer: 96 kernels of 11x11, stride 4
-    // TODO: this does not reflect the actual AlexNet architecture
-    layers.push_back(new ConvolutionLayer(cudnn, batch_size, 3, 96, 3, 1, 1));
-    
-    // Allocate memory for intermediate outputs
-    // Get the output dimensions from the layer
-    ConvolutionLayer* conv = static_cast<ConvolutionLayer*>(layers[0]);
-    size_t local_size = batch_size * 96 * 54 * 54 * sizeof(float);  // These dimensions should match your layer
-    float* layer_output;
-    cudaMalloc(&layer_output, local_size);
-    layer_outputs.push_back(layer_output);
-
-    // TODO: last layer
-    // Get the output dimensions from the layer
-    // ConvolutionLayer* conv = static_cast<ConvolutionLayer*>(layers[0]);
-    // size_t local_size = batch_size * output_size * sizeof(float);  // These dimensions should match your layer
-    // float* layer_output;
-    // cudaMalloc(&layer_output, local_size);
-    // layer_outputs.push_back(layer_output);
-}
-
-void AlexNet::forward(float *inp, float *out) {
+void Network::forward(float *inp, float *out) {
     float* current_input = inp;
     
     for (size_t i = 0; i < layers.size(); i++) {
         // TODO: This is a hack to get the output of the last layer. should be layers.size() - 1
-        float* current_output = (i == layers.size()) ? out : layer_outputs[i];
+        // 
+        float* current_output = (i == layers.size() - 1) ? out : layer_outputs[i];
         layers[i]->forward(current_input, current_output);
         current_input = current_output;
     }
 }
 
-float* AlexNet::createDummyGradient(float* output) {
+float* Network::createDummyGradient(float* output) {
     // Create a gradient of ones, similar to PyTorch's ones_like
-    size_t output_dim = batch_size * output_size;
+    size_t output_dim = batch_size_ * num_classes_;
     float* gradient;
     cudaMallocManaged(&gradient, output_dim * sizeof(float));
     
@@ -53,26 +31,44 @@ float* AlexNet::createDummyGradient(float* output) {
     return gradient;
 }
 
-void AlexNet::backwardInput(float* inp_grad, float* out_grad) {
+void Network::backwardInput(float* inp_grad, float* out_grad) {
     float* current_output_grad = out_grad;
     
     // Backward pass through layers in reverse order
     for (int i = layers.size() - 1; i >= 0; i--) {
-        ConvolutionLayer* conv_layer = static_cast<ConvolutionLayer*>(layers[i]);
-        float* current_input_grad = (i == 0) ? inp_grad : layer_outputs[i-1];
-        conv_layer->backwardInput(current_input_grad, current_output_grad);
+        // Determine where to store the computed gradient
+        float* current_input_grad;
+        if (i == 0) {
+            current_input_grad = inp_grad;
+        } else {
+            current_input_grad = gradient_outputs[i-1];  // Store in gradient_outputs instead of layer_outputs
+        }
+
+        // Compute gradients
+        if (auto* conv_layer = dynamic_cast<ConvolutionLayer*>(layers[i])) {
+            conv_layer->backwardInput(current_input_grad, current_output_grad);
+        } else if (auto* fc_layer = dynamic_cast<FCLayer*>(layers[i])) {
+            fc_layer->backwardInput(current_input_grad, current_output_grad);
+        }
+
+        // Update for next iteration
         current_output_grad = current_input_grad;
     }
 }
 
-void AlexNet::backwardParams(float* inp, float* out_grad) {
+void Network::backwardParams(float* inp, float* out_grad) {
     float* current_input = inp;
     float* current_output_grad = out_grad;
     
     // Compute parameter gradients for each layer
     for (int i = layers.size() - 1; i >= 0; i--) {
-        ConvolutionLayer* conv_layer = static_cast<ConvolutionLayer*>(layers[i]);
-        conv_layer->backwardParams(current_input, current_output_grad);
+        if (auto* conv_layer = dynamic_cast<ConvolutionLayer*>(layers[i])) {
+            // Handle convolutional layer
+            conv_layer->backwardParams(current_input, current_output_grad);
+        } else if (auto* fc_layer = dynamic_cast<FCLayer*>(layers[i])) {
+            // Handle fully connected layer
+            fc_layer->backwardParams(current_input, current_output_grad);
+        }
         
         if (i > 0) {
             current_input = layer_outputs[i-1];
@@ -81,7 +77,7 @@ void AlexNet::backwardParams(float* inp, float* out_grad) {
     }
 }
 
-void AlexNet::updateWeights(float learning_rate) {
+void Network::updateWeights(float learning_rate) {
     float lr = -learning_rate;  // Negative because cublasSaxpy does addition
 
     for (int i = layers.size() - 1; i >= 0; i--) {
@@ -97,23 +93,71 @@ void AlexNet::updateWeights(float learning_rate) {
     }
 }
 
-void AlexNet::zeroGradients() {
+void Network::zeroGradients() {
     for (Layer* layer : layers) {
         layer->zeroGradients();
     }
 }
 
-AlexNet::~AlexNet() {
+Network::~Network() {
     // Destroy cublas handle
     cublasDestroy(cublas);
     
+    // Free layer objects
     for (Layer* layer : layers) {
         delete layer;
     }
     
+    // Free forward pass outputs
     for (float* output : layer_outputs) {
         if (output != nullptr) {
             cudaFree(output);
         }
     }
+
+    // Free gradient outputs
+    for (float* gradient : gradient_outputs) {
+        if (gradient != nullptr) {
+            cudaFree(gradient);
+        }
+    }
+}
+
+void Network::addConvLayer(int width, int height, int in_channels, int out_channels, 
+                          int kernel_size, int stride, int padding) {
+    // Create and add the convolutional layer
+    layers.push_back(new ConvolutionLayer(cudnn, batch_size_, 
+                                        in_channels, out_channels, 
+                                        kernel_size, stride, padding));
+    
+    // Allocate memory for layer outputs and gradients
+    size_t output_size = batch_size_ * out_channels * width * height * sizeof(float);  // Adjust dimensions based on input/stride/padding
+    
+    // Forward pass output
+    float* layer_output;
+    cudaMalloc(&layer_output, output_size);
+    layer_outputs.push_back(layer_output);
+
+    // Backward pass gradient
+    float* gradient_output;
+    cudaMalloc(&gradient_output, output_size);
+    gradient_outputs.push_back(gradient_output);
+}
+
+void Network::addFCLayer(int in_features, int out_features) {
+    // Create and add the fully connected layer
+    layers.push_back(new FCLayer(cudnn, batch_size_, in_features, out_features));
+    
+    // Allocate memory for layer outputs and gradients
+    size_t output_size = batch_size_ * out_features * sizeof(float);
+    
+    // Forward pass output
+    float* layer_output;
+    cudaMalloc(&layer_output, output_size);
+    layer_outputs.push_back(layer_output);
+
+    // Backward pass gradient
+    float* gradient_output;
+    cudaMalloc(&gradient_output, output_size);
+    gradient_outputs.push_back(gradient_output);
 }
