@@ -18,6 +18,9 @@ ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
       stride(stride),
       padding(padding) {
     createDescriptors();
+
+    calculateOutputDimensions(input_height, input_width);
+
     // Initialize cublas
     cublasCreate(&cublas_handle);
 }
@@ -115,6 +118,32 @@ void ConvolutionLayer::forward(float* input, float* output) {
     
     const float alpha = 1.0f;
     const float beta = 0.0f;
+
+    // Check if any of the weights are zero
+    bool has_zero_weights = false;
+    for (size_t i = 0; i < getWeightSize(); i++) {
+        if (weights[i] == 0.0f) {
+            has_zero_weights = true;
+            break;
+        }
+    }
+    if (has_zero_weights) {
+        printf("Error: Some weights are zero.\n");
+        return;
+    }
+
+    // Check if any of the inputs are zero
+    bool has_zero_inputs = false;
+    for (size_t i = 0; i < batch_size * in_channels * input_height * input_width; i++) {
+        if (input[i] == 0.0f) {
+            has_zero_inputs = true;
+            break;
+        }
+    }
+    if (has_zero_inputs) {
+        printf("Error: Some inputs are zero.\n");
+        return;
+    }
 
     // Implements: y = w ⊗ x
     // To simplify things, biases are ignored

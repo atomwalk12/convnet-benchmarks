@@ -15,6 +15,7 @@ public:
                      int padding);
     ~ConvolutionLayer();
 
+    
     void createDescriptors() override;
     void forward(float* input, float* output) override;
     void backwardInput(float* input_gradient, float* output_gradient);
@@ -27,6 +28,15 @@ public:
     int getWeightSize() { 
         return out_channels * in_channels * kernel_size * kernel_size; 
     }
+    int getOutputHeight() { return output_height; }
+    int getOutputWidth() { return output_width; }
+    int getOutChannels() { return out_channels; }
+
+    void calculateOutputDimensions(int input_height, int input_width) {
+        output_height = ((input_height + 2*padding - kernel_size) / stride) + 1;
+        output_width = ((input_width + 2*padding - kernel_size) / stride) + 1;
+    }
+
 
 private:
     int batch_size, in_channels, out_channels;
