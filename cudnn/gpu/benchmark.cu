@@ -7,6 +7,23 @@
 const int NUM_ITERATIONS = 100;
 const int WARMUP_ITERATIONS = 10;
 
+// Network parameters
+const int BATCH_SIZE = 3;
+const int NUM_CLASSES = 3;
+
+const int IN_CHANNELS = 1;
+const int INPUT_HEIGHT = 3;
+const int INPUT_WIDTH = 3;
+
+const int CONV_OUT_CHANNELS = 3; // Filter count
+const int CONV_KERNEL_SIZE = 3; // Spatial extent
+const int CONV_STRIDE = 1;
+const int CONV_PADDING = 1;
+
+int INPUT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT * sizeof(float);
+int OUTPUT_SIZE = BATCH_SIZE * NUM_CLASSES * sizeof(float);
+int INPUT_GRADIENT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT * sizeof(float);
+
 void checkCUDNN(cudnnStatus_t status) {
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("cuDNN Error: %s\n", cudnnGetErrorString(status));
@@ -21,37 +38,46 @@ int main() {
     cudnnHandle_t cudnn;
     checkCUDNN(cudnnCreate(&cudnn));
 
-    // The data format is NCHW
-    const int batch_size = 64;    // N
-    const int channels = 3;       // C
-    const int height = 224;       // H
-    const int width = 224;        // W
-    const int num_classes = 10;
+    // Create network
+    Network model(cudnn, BATCH_SIZE, NUM_CLASSES);
+    
+    // Add layers with custom parameters
+    model.addConvLayer(
+        INPUT_WIDTH,
+        INPUT_HEIGHT,
+        IN_CHANNELS,
+        CONV_OUT_CHANNELS,
+        CONV_KERNEL_SIZE,
+        CONV_STRIDE,
+        CONV_PADDING
+    );
+    
+    model.addFCLayer(
+        CONV_OUT_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT,
+        NUM_CLASSES
+    );
 
     // These vectors will be initialized with random values
     // ================================
     // =====      Input data      =====
     // ================================
     float *input_data, *output_data;
-    cudaMallocManaged(&input_data, batch_size*channels*height*width*sizeof(float));
-    int temp =  batch_size * 96 * 54 * 54;
-    cudaMallocManaged(&output_data, temp * sizeof(float));// TODO batch_size*num_classes*sizeof(float));
+    
+    cudaMallocManaged(&input_data, INPUT_SIZE);
+    cudaMallocManaged(&output_data, OUTPUT_SIZE);
 
-    for (int i = 0; i < batch_size * channels * height * width; i++) {
+    for (int i = 0; i < INPUT_SIZE; i++) {
         input_data[i] = (float)rand() / RAND_MAX;
     }
 
-    for (int i = 0; i < temp; i++) { // TODO batch_size * num_classes; i++) {
+    for (int i = 0; i < OUTPUT_SIZE; i++) {
         output_data[i] = 0.0f;
     }
-
-    // Create and initialize the AlexNet model
-    AlexNet model(cudnn, batch_size, num_classes);
 
     // Create dummy gradient for backward pass
     float* output_gradient = model.createDummyGradient(output_data);
     float* input_gradient;
-    cudaMallocManaged(&input_gradient, batch_size*channels*height*width*sizeof(float));
+    cudaMallocManaged(&input_gradient, INPUT_GRADIENT_SIZE);
     cudaDeviceSynchronize();
 
     // ================================
@@ -61,8 +87,7 @@ int main() {
     
     // Target data still needs size, but we get it from the model
     float* target_data;
-    int output_size = model.getOutputSize();
-    cudaMalloc(&target_data, output_size * sizeof(float));
+    cudaMalloc(&target_data, OUTPUT_SIZE);
     
     for (int i = 0; i < WARMUP_ITERATIONS; i++) {
         model.zeroGradients();
