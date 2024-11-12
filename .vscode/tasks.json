@@ -40,6 +40,8 @@
                 "cudnn/gpu/alexnet.cu",
                 "cudnn/gpu/conv_layer.cu",
                 "cudnn/gpu/utils.cu",
+                "cudnn/gpu/loss.cu",
+                "cudnn/gpu/fc_layer.cu",
                 "-o",
                 "cudnn/gpu_trainer",
                 "-lcudnn",

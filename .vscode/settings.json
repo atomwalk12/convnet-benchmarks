@@ -33,6 +33,7 @@
         "string_view": "cpp",
         "initializer_list": "cpp",
         "span": "cpp",
-        "valarray": "cpp"
+        "valarray": "cpp",
+        "cstdlib": "cpp"
     }
 }
