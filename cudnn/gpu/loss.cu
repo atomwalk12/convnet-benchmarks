@@ -25,7 +25,7 @@ float MSELoss::compute(float* prediction, float* target, int size) {
     
     // Allocate temporary buffer dynamically
     float* d_buffer;
-    cudaMalloc(&d_buffer, size * sizeof(float));
+    cudaMallocManaged(&d_buffer, size * sizeof(float));
     
     // Compute squared differences
     mse_forward_kernel<<<num_blocks, block_size>>>(

@@ -20,9 +20,10 @@ const int CONV_KERNEL_SIZE = 3; // Spatial extent
 const int CONV_STRIDE = 1;
 const int CONV_PADDING = 1;
 
-int INPUT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT * sizeof(float);
-int OUTPUT_SIZE = BATCH_SIZE * NUM_CLASSES * sizeof(float);
-int INPUT_GRADIENT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT * sizeof(float);
+// Define sizes in terms of number of elements
+const int INPUT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT;
+const int OUTPUT_SIZE = BATCH_SIZE * NUM_CLASSES;
+const int INPUT_GRADIENT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT;
 
 void checkCUDNN(cudnnStatus_t status) {
     if (status != CUDNN_STATUS_SUCCESS) {
@@ -63,8 +64,8 @@ int main() {
     // ================================
     float *input_data, *output_data;
     
-    cudaMallocManaged(&input_data, INPUT_SIZE);
-    cudaMallocManaged(&output_data, OUTPUT_SIZE);
+    cudaMallocManaged(&input_data, INPUT_SIZE * sizeof(float));
+    cudaMallocManaged(&output_data, OUTPUT_SIZE * sizeof(float));
 
     for (int i = 0; i < INPUT_SIZE; i++) {
         input_data[i] = (float)rand() / RAND_MAX;
@@ -77,8 +78,10 @@ int main() {
     // Create dummy gradient for backward pass
     float* output_gradient = model.createDummyGradient(output_data);
     float* input_gradient;
-    cudaMallocManaged(&input_gradient, INPUT_GRADIENT_SIZE);
+    cudaMallocManaged(&input_gradient, INPUT_GRADIENT_SIZE * sizeof(float));
     cudaDeviceSynchronize();
+
+    MSELoss loss;
 
     // ================================
     // =====      Warmup run      =====
@@ -87,7 +90,11 @@ int main() {
     
     // Target data still needs size, but we get it from the model
     float* target_data;
-    cudaMalloc(&target_data, OUTPUT_SIZE);
+    cudaMallocManaged(&target_data, OUTPUT_SIZE * sizeof(float));
+
+    for (int i = 0; i < OUTPUT_SIZE; i++) {
+        target_data[i] = 1.0f;
+    }
     
     for (int i = 0; i < WARMUP_ITERATIONS; i++) {
         model.zeroGradients();
@@ -96,8 +103,8 @@ int main() {
         model.forward(input_data, output_data);
         
         // Compute loss and gradients
-        // float loss_value = loss.compute(output_data, target_data, output_size);
-        //loss.backward(output_data, target_data, output_gradient, output_size);
+        //float loss_value = loss.compute(output_data, target_data, OUTPUT_SIZE);
+        //loss.backward(output_data, target_data, output_gradient, OUTPUT_SIZE);
         
         // Backward pass
         model.backwardInput(input_gradient, output_gradient);

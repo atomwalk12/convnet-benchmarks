@@ -88,13 +88,13 @@ void ConvolutionLayer::createDescriptors() {
     );
 
     // Allocate and initialize weights and biases
-    size_t weight_size = getWeightSize() * sizeof(float);
-    cudaMallocManaged(&weights, weight_size);
-    cudaMallocManaged(&weight_gradients, weight_size);
+    size_t weight_size = getWeightSize();
+    cudaMallocManaged(&weights, weight_size * sizeof(float));
+    cudaMallocManaged(&weight_gradients, weight_size * sizeof(float));
 
 
     // Initialize weights with random values
-    for (size_t i = 0; i < weight_size/sizeof(float); i++) {
+    for (size_t i = 0; i < weight_size; i++) {
         weights[i] = (float)rand() / RAND_MAX;
     }
 
