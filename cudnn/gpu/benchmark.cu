@@ -103,8 +103,8 @@ int main() {
         model.forward(input_data, output_data);
         
         // Compute loss and gradients
-        //float loss_value = loss.compute(output_data, target_data, OUTPUT_SIZE);
-        //loss.backward(output_data, target_data, output_gradient, OUTPUT_SIZE);
+        float loss_value = loss.compute(output_data, target_data, OUTPUT_SIZE);
+        loss.backward(output_data, target_data, output_gradient, OUTPUT_SIZE);
         
         // Backward pass
         model.backwardInput(input_gradient, output_gradient);
@@ -113,7 +113,8 @@ int main() {
         // Update weights
         model.updateWeights(0.001f);
         
-        //printf("Iteration %d, Loss: %f\n", i, loss_value);
+        
+        printf("Iteration %d, Loss: %f\n", i, loss_value);
     }
 
     cudaDeviceSynchronize();
