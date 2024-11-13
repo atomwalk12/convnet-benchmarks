@@ -32,9 +32,27 @@ float MSELoss::compute(float* prediction, float* target, int size) {
         prediction, target, d_buffer, size
     );
     
-    // Get result
+    // Check for kernel launch errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Kernel launch failed: %s\n", cudaGetErrorString(err));
+        cudaFree(d_buffer);
+        exit(1);
+    }
+    
+    // Wait for kernel
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("cudaDeviceSynchronize failed: %s\n", cudaGetErrorString(err));
+        cudaFree(d_buffer);
+        exit(1);
+    }
+
+
     float total_loss = 0.0f;
-    cudaMemcpy(&total_loss, d_buffer, sizeof(float), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < size; i++) {
+        total_loss += d_buffer[i];
+    }
     
     // Clean up
     cudaFree(d_buffer);
