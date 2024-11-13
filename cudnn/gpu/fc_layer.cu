@@ -112,15 +112,7 @@ void FCLayer::backwardParams(float* input, float* output_gradient) {
     const float alpha = 1.0f;
     const float beta = 1.0f;  // Accumulate gradients
 
-    printf("Feature-related variables:\n");
-    printf("output_features: %d\n", output_features);
-    printf("input_features: %d\n", input_features);
 
-    printf("\nGradient and data pointers:\n");
-    printf("output_gradient pointer: %p\n", output_gradient);
-    printf("input pointer: %p\n", input);
-    printf("weight_gradients pointer: %p\n", weight_gradients);
-    fflush(stdout);
     // Perform matrix multiplication: weight_gradients = output_gradient * input^T
     // See https://docs.nvidia.com/cuda/cublas/ -> cublasSgemm
     cublasStatus_t status = cublasSgemm(cublas_handle,
