@@ -4,6 +4,8 @@
 #include <cublas_v2.h>
 
 ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
+                                 int input_width,
+                                 int input_height,
                                  int batch_size,
                                  int in_channels,
                                  int out_channels,
@@ -16,20 +18,18 @@ ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
       out_channels(out_channels),
       kernel_size(kernel_size),
       stride(stride),
-      padding(padding) {
-    createDescriptors();
+      padding(padding),
+      input_height(input_height),
+      input_width(input_width) {
 
-    calculateOutputDimensions(input_height, input_width);
+    createDescriptors();
+    calculateOutputDimensions();
 
     // Initialize cublas
     cublasCreate(&cublas_handle);
 }
 
-void ConvolutionLayer::createDescriptors() {
-    // Add these as class members to track dimensions
-    input_height = 9;
-    input_width = 9;
-    
+void ConvolutionLayer::createDescriptors() {   
     // Input descriptor
     cudnnCreateTensorDescriptor(&input_descriptor);
     cudnnSetTensor4dDescriptor(
@@ -99,11 +99,6 @@ void ConvolutionLayer::createDescriptors() {
     }
 
 
-    // Debug print
-    printf("Input dimensions: %dx%dx%dx%d\n", batch_size, in_channels, input_height, input_width);
-    printf("Output dimensions: %dx%dx%dx%d\n", out_n, out_c, output_height, output_width);
-    
-
     debugDescriptor("Input", input_descriptor);
     debugDescriptor("Output", output_descriptor);
     debugFilterDescriptor(filter_descriptor);
@@ -120,29 +115,19 @@ void ConvolutionLayer::forward(float* input, float* output) {
     const float beta = 0.0f;
 
     // Check if any of the weights are zero
-    bool has_zero_weights = false;
     for (size_t i = 0; i < getWeightSize(); i++) {
         if (weights[i] == 0.0f) {
-            has_zero_weights = true;
-            break;
+            printf("Error: Some weights are zero.\n");
+            exit(1);
         }
-    }
-    if (has_zero_weights) {
-        printf("Error: Some weights are zero.\n");
-        return;
     }
 
     // Check if any of the inputs are zero
-    bool has_zero_inputs = false;
-    for (size_t i = 0; i < batch_size * in_channels * input_height * input_width; i++) {
+    for (size_t i = 0; i < getInputSize(); i++) {
         if (input[i] == 0.0f) {
-            has_zero_inputs = true;
-            break;
+            printf("Error: Some inputs are zero.\n");
+            exit(1);
         }
-    }
-    if (has_zero_inputs) {
-        printf("Error: Some inputs are zero.\n");
-        return;
     }
 
     // Implements: y = w ⊗ x
@@ -193,7 +178,7 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
     // Verify pointers
     if (input_gradient == nullptr || output_gradient == nullptr || weights == nullptr) {
         printf("Error: Null pointer in backwardInput\n");
-        return;
+        exit(1);
     }
 
     const float alpha = 1.0f;
@@ -213,10 +198,8 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
 
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("Error getting workspace size: %s\n", cudnnGetErrorString(status));
-        return;
+        exit(1);
     }
-
-    printf("Backward Data workspace size: %.2f MB\n", workspace_size / (1024.0 * 1024.0));
 
     // Allocate workspace
     void* workspace = nullptr;
@@ -224,7 +207,7 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
         cudaError_t err = cudaMalloc(&workspace, workspace_size);
         if (err != cudaSuccess) {
             printf("Workspace allocation failed: %s\n", cudaGetErrorString(err));
-            return;
+            exit(1);
         }
     }
 

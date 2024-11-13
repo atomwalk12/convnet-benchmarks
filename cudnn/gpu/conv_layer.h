@@ -7,6 +7,8 @@
 class ConvolutionLayer : public Layer {
 public:
     ConvolutionLayer(cudnnHandle_t& cudnn_handle, 
+                     int input_width,
+                     int input_height,
                      int batch_size,
                      int in_channels,
                      int out_channels,
@@ -32,9 +34,13 @@ public:
     int getOutputWidth() { return output_width; }
     int getOutChannels() { return out_channels; }
 
-    void calculateOutputDimensions(int input_height, int input_width) {
+    void calculateOutputDimensions() {
         output_height = ((input_height + 2*padding - kernel_size) / stride) + 1;
         output_width = ((input_width + 2*padding - kernel_size) / stride) + 1;
+    }
+
+    size_t getInputSize() const {
+        return batch_size * in_channels * input_height * input_width;
     }
 
 

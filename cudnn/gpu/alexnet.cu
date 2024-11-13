@@ -123,24 +123,26 @@ Network::~Network() {
     }
 }
 
-void Network::addConvLayer(int width, int height, int in_channels, int out_channels, 
+void Network::addConvLayer(int input_width, int input_height, int in_channels, int out_channels, 
                           int kernel_size, int stride, int padding) {
     // Create and add the convolutional layer
-    layers.push_back(new ConvolutionLayer(cudnn, batch_size_, 
-                                        in_channels, out_channels, 
-                                        kernel_size, stride, padding));
+
+    ConvolutionLayer* conv_layer = new ConvolutionLayer(cudnn, input_width, input_height, batch_size_,
+                          in_channels, out_channels, 
+                          kernel_size, stride, padding);
+    layers.push_back(conv_layer);
     
     // Allocate memory for layer outputs and gradients
-    size_t output_size = batch_size_ * out_channels * width * height * sizeof(float);  // Adjust dimensions based on input/stride/padding
+    size_t output_size = conv_layer->getOutputHeight() * conv_layer->getOutputWidth();  // Adjust dimensions based on input/stride/padding
     
     // Forward pass output
     float* layer_output;
-    cudaMalloc(&layer_output, output_size);
+    cudaMallocManaged(&layer_output, output_size * sizeof(float));
     layer_outputs.push_back(layer_output);
 
     // Backward pass gradient
     float* gradient_output;
-    cudaMalloc(&gradient_output, output_size);
+    cudaMallocManaged(&gradient_output, output_size * sizeof(float));
     gradient_outputs.push_back(gradient_output);
 }
 
