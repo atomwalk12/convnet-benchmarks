@@ -5,7 +5,7 @@
 
 // Benchmark parameters
 const int NUM_ITERATIONS = 100;
-const int WARMUP_ITERATIONS = 10;
+const int WARMUP_ITERATIONS = 300;
 
 // Network parameters
 const int BATCH_SIZE = 3;

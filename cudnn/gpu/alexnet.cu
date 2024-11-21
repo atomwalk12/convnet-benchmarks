@@ -1,6 +1,7 @@
 #include "alexnet.h"
 #include <cstdlib>
 #include "utils.h"
+#include <string>
 
 Network::Network(cudnnHandle_t& handle, int batch_size, int num_classes_) 
     : cudnn(handle), batch_size_(batch_size), num_classes_(num_classes_) {
@@ -89,7 +90,7 @@ void Network::updateWeights(float learning_rate) {
                     conv->getWeightGradients(), 1,
                     conv->getWeights(), 1);
 
-        checkWeightChanges("Conv1", conv->getWeights(), conv->getWeightSize());
+        checkWeightChanges(("Layer " + std::to_string(i)).c_str(), conv->getWeights(), conv->getWeightSize());
     }
 }
 

@@ -59,6 +59,8 @@ private:
     float *weight_gradients, *bias_gradients;
     
     cublasHandle_t cublas_handle;
+    void* workspace;
+    size_t workspace_size;
 };
 
 #endif // CONV_LAYER_H 

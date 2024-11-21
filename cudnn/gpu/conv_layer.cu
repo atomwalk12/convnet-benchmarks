@@ -2,6 +2,8 @@
 #include "conv_layer.h"
 #include <stdio.h>
 #include <cublas_v2.h>
+#include <random>
+#include <cmath>
 
 ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
                                  int input_width,
@@ -92,12 +94,16 @@ void ConvolutionLayer::createDescriptors() {
     cudaMallocManaged(&weights, weight_size * sizeof(float));
     cudaMallocManaged(&weight_gradients, weight_size * sizeof(float));
 
+    // Initialize weights using Gaussian distribution (AlexNet paper specification)
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    float std = sqrt(2.0f / (in_channels * kernel_size * kernel_size));
+    float std_alexnet = 0.01f;
+    std::normal_distribution<float> distribution(0.0f, std);
 
-    // Initialize weights with random values
     for (size_t i = 0; i < weight_size; i++) {
-        weights[i] = (float)rand() / RAND_MAX;
+        weights[i] = distribution(gen);
     }
-
 
     debugDescriptor("Input", input_descriptor);
     debugDescriptor("Output", output_descriptor);
@@ -105,33 +111,32 @@ void ConvolutionLayer::createDescriptors() {
 
     // Debug print first few weights
     debugTensorValues("weights", weights, 10);
+
+    // Get workspace size needed for the selected algorithm
+    cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
+    workspace_size = 0;
+    cudnnGetConvolutionForwardWorkspaceSize(
+        cudnn,
+        input_descriptor,
+        filter_descriptor,
+        conv_descriptor,
+        output_descriptor,
+        algo,
+        &workspace_size
+    );
+
+    // Allocate workspace memory
+    workspace = nullptr;
+    if (workspace_size > 0) {
+        cudaMalloc(&workspace, workspace_size);
+    }
 }
 
 void ConvolutionLayer::forward(float* input, float* output) {
-    // Debug input values
-    debugTensorValues("input", input, 10);
-    
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    // Check if any of the weights are zero
-    for (size_t i = 0; i < getWeightSize(); i++) {
-        if (weights[i] == 0.0f) {
-            printf("Error: Some weights are zero.\n");
-            exit(1);
-        }
-    }
-
-    // Check if any of the inputs are zero
-    for (size_t i = 0; i < getInputSize(); i++) {
-        if (input[i] == 0.0f) {
-            printf("Error: Some inputs are zero.\n");
-            exit(1);
-        }
-    }
-
-    // Implements: y = w ⊗ x
-    // To simplify things, biases are ignored
+    // Perform convolution using the pre-allocated workspace
     cudnnStatus_t status = cudnnConvolutionForward(
         cudnn,
         &alpha,
@@ -140,9 +145,9 @@ void ConvolutionLayer::forward(float* input, float* output) {
         filter_descriptor,
         weights,
         conv_descriptor,
-        CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM,
-        nullptr,  // workspace (we should add this as a class member)
-        0,        // workspace size
+        CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM,
+        workspace,
+        workspace_size,
         &beta,
         output_descriptor,
         output
@@ -307,5 +312,8 @@ ConvolutionLayer::~ConvolutionLayer() {
     destroyDescriptors();
     // Destroy cublas handle
     cublasDestroy(cublas_handle);
+    if (workspace) {
+        cudaFree(workspace);
+    }
 }
 
