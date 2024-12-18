@@ -7,18 +7,35 @@
 const int NUM_ITERATIONS = 100;
 const int WARMUP_ITERATIONS = 300;
 
+// // Network parameters
+// const int BATCH_SIZE = 3;
+// const int NUM_CLASSES = 3;
+
+// // Modified for AlexNet input specifications
+// const int IN_CHANNELS = 3;  // RGB input
+// const int INPUT_HEIGHT = 224;
+// const int INPUT_WIDTH = 224;
+
+// // Modified for AlexNet first conv layer
+// const int CONV_OUT_CHANNELS = 96;  // AlexNet's first layer filter count
+// const int CONV_KERNEL_SIZE = 11;   // 11x11 kernel
+// const int CONV_STRIDE = 4;         // Stride of 4
+// const int CONV_PADDING = 0;        // No padding
+
 // Network parameters
-const int BATCH_SIZE = 3;
+const int BATCH_SIZE = 1;
 const int NUM_CLASSES = 3;
 
+// Modified for AlexNet input specifications
 const int IN_CHANNELS = 1;
-const int INPUT_HEIGHT = 3;
+const int INPUT_HEIGHT = 2;
 const int INPUT_WIDTH = 3;
 
-const int CONV_OUT_CHANNELS = 3; // Filter count
-const int CONV_KERNEL_SIZE = 3; // Spatial extent
-const int CONV_STRIDE = 1;
-const int CONV_PADDING = 1;
+// Modified for AlexNet first conv layer
+const int CONV_OUT_CHANNELS = 2;  // AlexNet's first layer filter count
+const int CONV_KERNEL_SIZE = 2;   // 11x11 kernel
+const int CONV_STRIDE = 1;         // Stride of 4
+const int CONV_PADDING = 0;        // No padding
 
 // Define sizes in terms of number of elements
 const int INPUT_SIZE = BATCH_SIZE * IN_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT;
@@ -42,7 +59,7 @@ int main() {
     // Create network
     Network model(cudnn, BATCH_SIZE, NUM_CLASSES);
     
-    // Add layers with custom parameters
+    // Add layers with AlexNet parameters
     model.addConvLayer(
         INPUT_WIDTH,
         INPUT_HEIGHT,
@@ -53,8 +70,12 @@ int main() {
         CONV_PADDING
     );
     
+    // Note: You might need to adjust the FC layer input size based on the conv output
+    const int conv_output_height = (INPUT_HEIGHT - CONV_KERNEL_SIZE + 2 * CONV_PADDING) / CONV_STRIDE + 1;
+    const int conv_output_width = (INPUT_WIDTH - CONV_KERNEL_SIZE + 2 * CONV_PADDING) / CONV_STRIDE + 1;
+    
     model.addFCLayer(
-        CONV_OUT_CHANNELS * INPUT_WIDTH * INPUT_HEIGHT,
+        CONV_OUT_CHANNELS * conv_output_width * conv_output_height,
         NUM_CLASSES
     );
 
@@ -67,8 +88,16 @@ int main() {
     cudaMallocManaged(&input_data, INPUT_SIZE * sizeof(float));
     cudaMallocManaged(&output_data, OUTPUT_SIZE * sizeof(float));
 
-    for (int i = 0; i < INPUT_SIZE; i++) {
-        input_data[i] = (float)rand() / RAND_MAX;
+        // Create input data with explicit layout
+    for (int b = 0; b < BATCH_SIZE; b++) {
+        for (int c = 0; c < IN_CHANNELS; c++) {
+            for (int h = 0; h < INPUT_HEIGHT; h++) {
+                for (int w = 0; w < INPUT_WIDTH; w++) {
+                    int idx = ((b * IN_CHANNELS + c) * INPUT_HEIGHT + h) * INPUT_WIDTH + w;
+                    input_data[idx] = (float)rand() / RAND_MAX;
+                }
+            }
+        }
     }
 
     for (int i = 0; i < OUTPUT_SIZE; i++) {
