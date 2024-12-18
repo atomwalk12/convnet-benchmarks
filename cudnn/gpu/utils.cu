@@ -81,4 +81,40 @@ void checkWeightChanges(const char* label, float* device_weights, int size) {
     prev_sum = sum;
     
     delete[] host_weights;
+}
+
+void debugMatrixLayout(const char* label, float* device_ptr, 
+                      int rows, int cols, int max_rows, int max_cols) {
+    printf("\nMatrix Layout Debug for %s:\n", label);
+    printf("Full dimensions: [%d × %d]\n", rows, cols);
+    
+    // Limit the size we're copying
+    int display_rows = std::min(rows, max_rows);
+    int display_cols = std::min(cols, max_cols);
+    
+    float* host_data = new float[rows * cols];
+    cudaMemcpy(host_data, device_ptr, rows * cols * sizeof(float), 
+               cudaMemcpyDeviceToHost);
+    
+    printf("\nAssuming Row-Major Layout:\n");
+    for(int i = 0; i < display_rows; i++) {
+        printf("Row %d: ", i);
+        for(int j = 0; j < display_cols; j++) {
+            printf("%8.4f ", host_data[i * cols + j]);
+        }
+        printf("\n");
+    }
+    
+    printf("\nAssuming Column-Major Layout:\n");
+    for(int i = 0; i < display_rows; i++) {
+        printf("Row %d: ", i);
+        for(int j = 0; j < display_cols; j++) {
+            printf("%8.4f ", host_data[i + j * rows]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+    fflush(stdout);
+    
+    delete[] host_data;
 } 
