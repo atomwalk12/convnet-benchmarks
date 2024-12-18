@@ -3,6 +3,7 @@
 
 #include "layer.h"
 #include <cublas_v2.h>
+#include "relu.h"
 
 class ConvolutionLayer : public Layer {
 public:
@@ -61,6 +62,7 @@ private:
     cublasHandle_t cublas_handle;
     void* workspace;
     size_t workspace_size;
+    ReLU_GPU* relu;
 };
 
 #endif // CONV_LAYER_H 

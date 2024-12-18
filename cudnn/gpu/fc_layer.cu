@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cudnn.h>
+#include <random>
 
 
 FCLayer::FCLayer(cudnnHandle_t& cudnn_handle,
@@ -22,10 +23,15 @@ FCLayer::FCLayer(cudnnHandle_t& cudnn_handle,
     cudaMallocManaged(&weights, weight_size);
     cudaMallocManaged(&weight_gradients, weight_size);
     
-    // Xavier initialization
-    float scale = sqrt(2.0f / (input_features + output_features));
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    
+    // He initialization - using input_features as fan_in
+    float std = sqrt(2.0f / input_features);
+    std::normal_distribution<float> distribution(0.0f, std);
+
     for (int i = 0; i < input_features * output_features; i++) {
-        weights[i] = scale * ((float)rand() / RAND_MAX * 2 - 1);
+        weights[i] = distribution(gen);
     }
     
     zeroGradients();
@@ -55,46 +61,51 @@ void FCLayer::forward(float* input, float* output) {
     const float beta = 0.0f;
     
     // Perform matrix multiplication: output = weights * input
+    // Goal: output = weights × input
     cublasStatus_t status = cublasSgemm(cublas_handle,
-                CUBLAS_OP_N,
-                CUBLAS_OP_N,
-                output_features,  // m: rows of output
-                batch_size,      // n: cols of output
-                input_features,  // k: cols of weights
+                CUBLAS_OP_N,        // weights as-is: [output_features × input_features]
+                CUBLAS_OP_N,        // input as-is: [input_features × batch_size]
+                output_features,    // rows of A
+                batch_size,         // cols of A
+                input_features,     // cols of A and rows of B
                 &alpha,
-                weights,
-                output_features,
-                input,
+                weights,            // [output_features × input_features]
+                output_features,    
+                input,              // [input_features × batch_size]
                 input_features,
                 &beta,
-                output,
+                output,             // [output_features × batch_size]
                 output_features);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("CUBLAS error: %s\n", cublasGetStatusString(status));
         exit(1);
     }
+
+    // Debug output values
+    float* host_output = new float[output_features * batch_size];
+    cudaMemcpy(host_output, output, output_features * batch_size * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void FCLayer::backwardInput(float* input_gradient, float* output_gradient) {
     const float alpha = 1.0f;
     const float beta = 0.0f;
     
-    // Perform matrix multiplication: input_gradient = weights^T * output_gradient
+    // Perform matrix multiplication: input_gradient = weights^T × output_gradient
     cublasStatus_t status = cublasSgemm(cublas_handle,
-                CUBLAS_OP_N,
-                CUBLAS_OP_N,
-                input_features,  // m: rows of input gradient
-                batch_size,     // n: cols of input gradient
-                output_features, // k: rows of weights
+                CUBLAS_OP_T,        // Need weights transposed
+                CUBLAS_OP_N,        // output_gradient as-is
+                input_features,     // rows of result
+                batch_size,         // cols of result
+                output_features,    // inner dimension
                 &alpha,
-                weights,
-                input_features, // lda: leading dimension of weights (was output_features)
-                output_gradient,
-                output_features, // ldb: leading dimension of output_gradient
+                weights,            // [output_features × input_features]
+                output_features,
+                output_gradient,    // [output_features × batch_size]
+                output_features,
                 &beta,
-                input_gradient,
-                input_features); // ldc: leading dimension of input_gradient
+                input_gradient,     // [input_features × batch_size]
+                input_features);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("CUBLAS error: %s\n", cublasGetStatusString(status));
@@ -113,22 +124,22 @@ void FCLayer::backwardParams(float* input, float* output_gradient) {
     const float beta = 1.0f;  // Accumulate gradients
 
 
-    // Perform matrix multiplication: weight_gradients = output_gradient * input^T
+    // Perform matrix multiplication: weight_gradients = output_gradient × input^T
     // See https://docs.nvidia.com/cuda/cublas/ -> cublasSgemm
     cublasStatus_t status = cublasSgemm(cublas_handle,
-                CUBLAS_OP_N,
-                CUBLAS_OP_N,
-                output_features,    // m: rows of weight gradients
-                input_features,     // n: cols of weight gradients
-                batch_size,         // k: inner dimension for multiplication
+                CUBLAS_OP_N,        // output_gradient as-is
+                CUBLAS_OP_T,        // Need input transposed
+                output_features,    // rows of result
+                input_features,     // cols of result
+                batch_size,         // inner dimension
                 &alpha,
                 output_gradient,    // [output_features × batch_size]
-                output_features,    // lda: leading dimension of output_gradient
-                input,             // [batch_size × input_features]
-                batch_size,        // ldb: leading dimension of input (was input_features)
+                output_features,
+                input,              // [input_features × batch_size]
+                input_features,
                 &beta,
                 weight_gradients,   // [output_features × input_features]
-                output_features);   // ldc: leading dimension of weight_gradients
+                output_features);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("CUBLAS error: %s\n", cublasGetStatusString(status));

@@ -27,6 +27,10 @@ ConvolutionLayer::ConvolutionLayer(cudnnHandle_t& cudnn_handle,
     createDescriptors();
     calculateOutputDimensions();
 
+    // Initialize ReLU with the total size of the output
+    int total_elements = batch_size * out_channels * output_height * output_width;
+    relu = new ReLU_GPU(total_elements);
+
     // Initialize cublas
     cublasCreate(&cublas_handle);
 }
@@ -98,7 +102,7 @@ void ConvolutionLayer::createDescriptors() {
     std::random_device rd;
     std::mt19937 gen(rd());
     float std = sqrt(2.0f / (in_channels * kernel_size * kernel_size));
-    float std_alexnet = 0.01f;
+    // float std_alexnet = 0.01f;
     std::normal_distribution<float> distribution(0.0f, std);
 
     for (size_t i = 0; i < weight_size; i++) {
@@ -136,6 +140,11 @@ void ConvolutionLayer::forward(float* input, float* output) {
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
+    // Allocate temporary buffer for convolution output before ReLU
+    float* conv_output;
+    size_t output_size = batch_size * out_channels * output_height * output_width * sizeof(float);
+    cudaMallocManaged(&conv_output, output_size);
+
     // Perform convolution using the pre-allocated workspace
     cudnnStatus_t status = cudnnConvolutionForward(
         cudnn,
@@ -150,21 +159,52 @@ void ConvolutionLayer::forward(float* input, float* output) {
         workspace_size,
         &beta,
         output_descriptor,
-        output
+        conv_output  // Store in temporary buffer
     );
+
     if (status != CUDNN_STATUS_SUCCESS) {
         printf("CUDNN forward failed: %s\n", cudnnGetErrorString(status));
         exit(1);
     }
+
+    // Debug conv_output distribution
+    int total_elements = batch_size * out_channels * output_height * output_width;
+    float max_conv = -1e9, min_conv = 1e9;
+    for(int i = 0; i < total_elements; i++) {
+        max_conv = max(max_conv, conv_output[i]);
+        min_conv = min(min_conv, conv_output[i]);
+    }
+    printf("Conv output dimensions: batch=%d, channels=%d, height=%d, width=%d\n",
+           batch_size, out_channels, output_height, output_width);
+    printf("Total elements: %d, ReLU sz_out: %d\n", total_elements, relu->getSzOut());
+    printf("Conv output range before ReLU: [%f, %f]\n", min_conv, max_conv);
+
+    // Apply ReLU activation
+    relu->forward(conv_output, output);  // Output first, then input
+
+    // Debug output distribution after ReLU
+    float max_out = -1e9, min_out = 1e9;
+    for(int i = 0; i < total_elements; i++) {
+        max_out = max(max_out, output[i]);
+        min_out = min(min_out, output[i]);
+    }
+    printf("Output range after ReLU: [%f, %f]\n", min_out, max_out);
+
+    printf("FC Layer Debug:\n");
+    printf("First 10 output values:\n");
+    for(int i = 0; i < min(10, total_elements); i++) {
+        printf("[%d]: %f\n", i, output[i]);
+    }
+    fflush(stdout);
+
+    // Free temporary buffer
+    cudaFree(conv_output);
     
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
         exit(1);
     }
-
-    // Debug output values
-    debugTensorValues("output", output, 10);
 }
 
 void ConvolutionLayer::destroyDescriptors() {
@@ -177,11 +217,19 @@ void ConvolutionLayer::destroyDescriptors() {
 }
 
 void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradient) {
+    // First apply ReLU backward
+    float* relu_gradient_output;
+    size_t output_size = batch_size * out_channels * output_height * output_width * sizeof(float);
+    cudaMallocManaged(&relu_gradient_output, output_size);
+
+    relu->backward(relu_gradient_output, output_gradient);
+
+    // Then proceed with normal conv backward using the modified gradient
     // Debug output gradient values
-    debugTensorValues("output gradient", output_gradient, 10);
+    debugTensorValues("output gradient", relu_gradient_output, 10);
     
     // Verify pointers
-    if (input_gradient == nullptr || output_gradient == nullptr || weights == nullptr) {
+    if (input_gradient == nullptr || relu_gradient_output == nullptr || weights == nullptr) {
         printf("Error: Null pointer in backwardInput\n");
         exit(1);
     }
@@ -224,11 +272,11 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
         filter_descriptor,
         weights,
         output_descriptor,
-        output_gradient,
+        relu_gradient_output,  // Use the gradient after ReLU backward
         conv_descriptor,
         CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,
-        workspace,        // Added workspace
-        workspace_size,   // Added workspace size
+        workspace,
+        workspace_size,
         &beta,
         input_descriptor,
         input_gradient
@@ -250,6 +298,9 @@ void ConvolutionLayer::backwardInput(float* input_gradient, float* output_gradie
         cudaFree(workspace);
     }
 
+    // Free temporary buffer
+    cudaFree(relu_gradient_output);
+
     // Debug input gradient values
     debugTensorValues("input gradient", input_gradient, 10);
 }
@@ -264,9 +315,6 @@ void ConvolutionLayer::backwardParams(float* input, float* output_gradient) {
         printf("Error: Null pointer passed to backwardParams\n");
         return;
     }
-    // Zero out gradients before computing new ones
-    // TODO to delete
-    // zeroGradients();
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -315,5 +363,6 @@ ConvolutionLayer::~ConvolutionLayer() {
     if (workspace) {
         cudaFree(workspace);
     }
+    delete relu;
 }
 
