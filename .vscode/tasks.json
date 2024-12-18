@@ -43,11 +43,12 @@
                 "cudnn/gpu/utils.cu",
                 "cudnn/gpu/loss.cu",
                 "cudnn/gpu/fc_layer.cu",
+                "cudnn/gpu/relu.cu",
                 "-o",
                 "cudnn/gpu_trainer",
                 "-lcudnn",
                 "-lcublas",
-                "-lineinfo"
+                //"-lineinfo"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
