@@ -1,9 +1,8 @@
-from config import ModelConfig
-from datasets import load_dataset
+from datasets import Dataset
 
-class Dataset:
-    def __init__(self, config: ModelConfig):
-        self.config = config
+class ImageNetDataset:
+    def __init__(self, dataset: Dataset):
+        self.dataset = dataset
 
     def __len__(self):
         return len(self.dataset)

@@ -6,8 +6,10 @@ class ModelConfig:
     batch_size: int
     num_epochs: int
     lr: float
+    seed: int = None
     local_rank: int = -1  # Rank of the local process (gpu) on a single machine
     global_rank: int = -1 # Rank of the global process across the cluster
+    evaluate: bool = False
 
 
 def get_default_config() -> ModelConfig:
