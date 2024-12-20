@@ -18,6 +18,21 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
+import torchmetrics
+import wandb
+
+class AverageMeter(torchmetrics.Metric):
+    def __init__(self):
+        super().__init__()
+        self.add_state("sum", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+    def update(self, value):
+        self.sum += value
+        self.count += 1
+
+    def compute(self):
+        return self.sum.float() / self.count
 
 def main():
     warnings.filterwarnings("ignore")
@@ -106,12 +121,12 @@ def main_worker(config: ModelConfig):
     # TODO: Resume from checkpoint
     start_epoch = 0
     best_acc1 = 0
-    
+    global_step = 0
     # TODO: Define wandb logging
 
     # Evaluate if flag is set
     if config.evaluate:
-        validate(val_loader, model, criterion)
+        validate(config, val_loader, model, criterion, device, global_step)
         return
 
     for epoch in range(start_epoch, config.num_epochs):
@@ -120,7 +135,7 @@ def main_worker(config: ModelConfig):
         train(config, train_loader, model, criterion, optimizer, epoch, device)
 
         if config.global_rank == 0:
-            acc1 = validate(val_loader, model, criterion)
+            acc1 = validate(config, val_loader, model, criterion, device, global_step)
 
         scheduler.step()
 
@@ -144,7 +159,7 @@ def main_worker(config: ModelConfig):
 
 def get_dataset(config: ModelConfig):
     if config.dummy:
-        train_ds = datasets.FakeData(1000, (3, 224, 224), 10, transforms.ToTensor())
+        train_ds = datasets.FakeData(100, (3, 224, 224), 10, transforms.ToTensor())
         val_ds = datasets.FakeData(300, (3, 224, 224), 10, transforms.ToTensor())
     else:
         train_ds = load_dataset("Maysee/tiny-imagenet", split="train")
@@ -189,9 +204,58 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device):
         })
 
 
-def validate(val_loader, model, criterion):
+def validate(config, val_loader, model, criterion, device, global_step):
+    model.eval()
     
-    return 0
+    # Initialize metrics
+    metrics = {
+        'val_loss': AverageMeter().to(device),
+        'accuracy': torchmetrics.Accuracy(task='multiclass', num_classes=1000).to(device),
+        'precision': torchmetrics.Precision(task='multiclass', num_classes=1000).to(device),
+        'recall': torchmetrics.Recall(task='multiclass', num_classes=1000).to(device),
+        'f1': torchmetrics.F1Score(task='multiclass', num_classes=1000).to(device)
+    }
+    
+    with torch.no_grad():
+        for batch in val_loader:
+            images, target = batch
+            images = images.to(device)
+            target = target.to(device)
+            
+            # Forward pass
+            output = model(images)
+            loss = criterion(output, target)
+            
+            # Update metrics
+            metrics['val_loss'].update(loss.item())
+            metrics['accuracy'].update(output, target)
+            metrics['precision'].update(output, target)
+            metrics['recall'].update(output, target)
+            metrics['f1'].update(output, target)
+    
+    # Compute final metrics
+    results = {
+        'val_loss': metrics['val_loss'].compute(),
+        'accuracy': metrics['accuracy'].compute(),
+        'precision': metrics['precision'].compute(),
+        'recall': metrics['recall'].compute(),
+        'f1': metrics['f1'].compute()
+    }
+    
+    # Log metrics if using wandb
+    if config.global_rank == 0:
+        wandb.log({
+            f"val/{k}": v 
+            for k, v in results.items()
+        }, step=global_step)
+        
+        # Print metrics
+        print("\nValidation Results:")
+        for k, v in results.items():
+            print(f"{k:>10}: {v:.4f}")
+    
+    # Return average loss for learning rate scheduling
+    return results['val_loss']
 
 
 def save_checkpoint(state, is_best, filename="checkpoint.pth.tar"):
