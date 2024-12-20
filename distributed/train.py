@@ -7,9 +7,11 @@ import warnings
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
+import torchmetrics
 import torchvision.datasets as datasets
 import torchvision.models as models
-from config import ModelConfig, get_default_config
+import wandb
+from config import ModelConfig, get_checkpoint, get_default_config, get_latest_checkpoint
 from dataset import ImageNetDataset
 from datasets import load_dataset
 from torch.distributed import destroy_process_group, init_process_group
@@ -18,8 +20,7 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
-import torchmetrics
-import wandb
+
 
 class AverageMeter(torchmetrics.Metric):
     def __init__(self):
@@ -34,6 +35,7 @@ class AverageMeter(torchmetrics.Metric):
     def compute(self):
         return self.sum.float() / self.count
 
+
 def main():
     warnings.filterwarnings("ignore")
 
@@ -43,18 +45,22 @@ def main():
     model_names = sorted(
         name
         for name in models.__dict__
-        if name.islower()
-        and not name.startswith("__")
-        and callable(models.__dict__[name])
+        if name.islower() and not name.startswith("__") and callable(models.__dict__[name])
     )
 
     config = get_default_config()
     parser = argparse.ArgumentParser()
+    parser.add_argument("--arch", type=str, default=config.arch, choices=model_names)
     parser.add_argument("--batch_size", type=int, default=config.batch_size)
     parser.add_argument("--num_epochs", type=int, default=config.num_epochs)
     parser.add_argument("--lr", type=float, default=config.lr)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--arch", type=str, default="alexnet", choices=model_names)
+    parser.add_argument("--checkpoint_dir", type=str, default=config.checkpoint_dir)
+    parser.add_argument("--model_name", type=str, default=config.model_name)
+    parser.add_argument("--seed", type=int, default=config.seed)
+    parser.add_argument("--evaluate", type=bool, default=config.evaluate)
+    parser.add_argument("--dataset", type=str, default=config.dataset)
+    parser.add_argument("--resume", type=str, default=config.resume)
+    parser.add_argument("--exp_name", type=str, default=config.exp_group)
 
     args = parser.parse_args()
 
@@ -107,13 +113,17 @@ def main_worker(config: ModelConfig):
     device = torch.device("cuda")
     print(f"GPU {config.local_rank} - Using device: {device}")
 
+    # Create checkpoint directory if it doesn't exist
+    os.makedirs(config.checkpoint_dir, exist_ok=True)
+
     # Load dataset
     train_loader, val_loader = get_dataset(config)
 
     # Load training modules
     model = load_model(config, device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, eps=1e-9)
-    scheduler = StepLR(optimizer, step_size=30, gamma=0.1) # LR decays by 10% every 30 epochs
+    # LR decays by 10% every 30 epochs
+    scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
 
     model = DistributedDataParallel(model, device_ids=[config.local_rank])
     criterion = nn.CrossEntropyLoss().to(device)
@@ -122,7 +132,24 @@ def main_worker(config: ModelConfig):
     start_epoch = 0
     best_acc1 = 0
     global_step = 0
+    wandb_run_id = None
+    if config.resume:
+        if config.resume == "latest":
+            weights_path = get_latest_checkpoint(config)
+        else:
+            weights_path = get_checkpoint(config, int(config.resume))
+
     # TODO: Define wandb logging
+    # Only initialize W&B on the global rank 0 node
+    if config.local_rank == 0:
+        wandb.init(
+            project="distributed_systems",
+            name=f"global_rank_{config.global_rank}",
+            id=wandb_run_id,
+            resume="allow",
+            group=config.exp_group,
+            config=config,
+        )
 
     # Evaluate if flag is set
     if config.evaluate:
@@ -144,7 +171,7 @@ def main_worker(config: ModelConfig):
         best_acc1 = max(acc1, best_acc1)
 
         if config.global_rank == 0:
-            save_checkpoint(
+            torch.save(
                 {
                     "epoch": epoch + 1,
                     "arch": config.arch,
@@ -153,17 +180,19 @@ def main_worker(config: ModelConfig):
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
                 },
-                is_best,
+                get_checkpoint(config, epoch + 1),
             )
 
 
 def get_dataset(config: ModelConfig):
-    if config.dummy:
+    if config.dataset == "dummy":
         train_ds = datasets.FakeData(100, (3, 224, 224), 10, transforms.ToTensor())
         val_ds = datasets.FakeData(300, (3, 224, 224), 10, transforms.ToTensor())
-    else:
+    elif config.dataset == "tiny-imagenet":
         train_ds = load_dataset("Maysee/tiny-imagenet", split="train")
         val_ds = load_dataset("Maysee/tiny-imagenet", split="valid")
+    else:
+        raise ValueError(f"Dataset {config.dataset} not supported")
 
     train_ds = ImageNetDataset(train_ds)
     val_ds = ImageNetDataset(val_ds)
@@ -178,16 +207,16 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device):
     model.train()
 
     batch_it = tqdm(
-        train_loader, 
-        desc=f"Processing Epoch {epoch:03d} on rank {config.global_rank}", 
-        disable=config.local_rank != 0
+        train_loader,
+        desc=f"Processing Epoch {epoch:03d} on rank {config.global_rank}",
+        disable=config.local_rank != 0,
     )
 
     for batch in batch_it:
         images, target = batch
         images = images.to(device)
         target = target.to(device)
-        
+
         # Forward pass
         output = model(images)
         loss = criterion(output, target)
@@ -198,70 +227,68 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device):
         optimizer.step()
 
         # Update progress bar with current loss
-        batch_it.set_postfix({
-            'loss': f'{loss.item():6.3f}',
-            'lr': f'{optimizer.param_groups[0]["lr"]:.1e}'
-        })
+        batch_it.set_postfix(
+            {
+                "loss": f"{loss.item():6.3f}",
+                "lr": f'{optimizer.param_groups[0]["lr"]:.1e}',
+            }
+        )
 
 
 def validate(config, val_loader, model, criterion, device, global_step):
     model.eval()
-    
+
     # Initialize metrics
     metrics = {
-        'val_loss': AverageMeter().to(device),
-        'accuracy': torchmetrics.Accuracy(task='multiclass', num_classes=1000).to(device),
-        'precision': torchmetrics.Precision(task='multiclass', num_classes=1000).to(device),
-        'recall': torchmetrics.Recall(task='multiclass', num_classes=1000).to(device),
-        'f1': torchmetrics.F1Score(task='multiclass', num_classes=1000).to(device)
+        "val_loss": AverageMeter().to(device),
+        "accuracy": torchmetrics.Accuracy(task="multiclass", num_classes=1000).to(device),
+        "precision": torchmetrics.Precision(task="multiclass", num_classes=1000).to(device),
+        "recall": torchmetrics.Recall(task="multiclass", num_classes=1000).to(device),
+        "f1": torchmetrics.F1Score(task="multiclass", num_classes=1000).to(device),
     }
-    
+
     with torch.no_grad():
         for batch in val_loader:
             images, target = batch
             images = images.to(device)
             target = target.to(device)
-            
+
             # Forward pass
             output = model(images)
             loss = criterion(output, target)
-            
+
             # Update metrics
-            metrics['val_loss'].update(loss.item())
-            metrics['accuracy'].update(output, target)
-            metrics['precision'].update(output, target)
-            metrics['recall'].update(output, target)
-            metrics['f1'].update(output, target)
-    
+            metrics["val_loss"].update(loss.item())
+            metrics["accuracy"].update(output, target)
+            metrics["precision"].update(output, target)
+            metrics["recall"].update(output, target)
+            metrics["f1"].update(output, target)
+
     # Compute final metrics
     results = {
-        'val_loss': metrics['val_loss'].compute(),
-        'accuracy': metrics['accuracy'].compute(),
-        'precision': metrics['precision'].compute(),
-        'recall': metrics['recall'].compute(),
-        'f1': metrics['f1'].compute()
+        "val_loss": metrics["val_loss"].compute(),
+        "accuracy": metrics["accuracy"].compute(),
+        "precision": metrics["precision"].compute(),
+        "recall": metrics["recall"].compute(),
+        "f1": metrics["f1"].compute(),
     }
-    
+
     # Log metrics if using wandb
     if config.global_rank == 0:
-        wandb.log({
-            f"val/{k}": v 
-            for k, v in results.items()
-        }, step=global_step)
-        
+        wandb.log({f"val/{k}": v for k, v in results.items()}, step=global_step)
+
         # Print metrics
         print("\nValidation Results:")
         for k, v in results.items():
             print(f"{k:>10}: {v:.4f}")
-    
+
     # Return average loss for learning rate scheduling
-    return results['val_loss']
+    return results["val_loss"]
 
 
-def save_checkpoint(state, is_best, filename="checkpoint.pth.tar"):
-    torch.save(state, filename)
-    if is_best:
-        shutil.copyfile(filename, "model_best.pth.tar")
+def save_checkpoint(config, state):
+    checkpoint_path = get_checkpoint(config, state["epoch"])
+    torch.save(state, checkpoint_path)
 
 
 def load_model(config: ModelConfig, device: torch.device):
@@ -272,13 +299,19 @@ def load_model(config: ModelConfig, device: torch.device):
 
 if __name__ == "__main__":
     import sys
+
     sys.argv = [
-        'train.py',  # Program name
-        '--batch_size', '32',
-        '--num_epochs', '10',
-        '--lr', '0.001',
-        '--arch', 'alexnet',
-        '--num_epochs', '1',
+        "train.py",  # Program name
+        "--batch_size",
+        "32",
+        "--num_epochs",
+        "10",
+        "--lr",
+        "0.001",
+        "--arch",
+        "alexnet",
+        "--num_epochs",
+        "1",
     ]
     if "WORLD_SIZE" not in os.environ:
         os.environ["WORLD_SIZE"] = "1"
