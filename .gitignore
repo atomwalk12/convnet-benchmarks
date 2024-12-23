@@ -14,3 +14,6 @@ nervana/nervanagpu/
 theano/Theano/
 theano/pylearn2/
 theano/scikits.cuda/
+wandb
+__pycache__/
+checkpoints
