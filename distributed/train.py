@@ -12,8 +12,9 @@ import torchmetrics
 import torchvision.datasets as datasets
 import torchvision.models as models
 import wandb
-from config import ModelConfig, get_checkpoint, get_default_config, get_latest_checkpoint
-from dataset import ImageNetDataset
+from config import (ModelConfig, get_checkpoint, get_default_config,
+                    get_latest_checkpoint)
+from dataset import AverageMeter, ImageNetDataset
 from datasets import load_dataset
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel
@@ -21,20 +22,6 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
-
-
-class AverageMeter(torchmetrics.Metric):
-    def __init__(self):
-        super().__init__()
-        self.add_state("sum", default=torch.tensor(0.0), dist_reduce_fx="sum")
-        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
-
-    def update(self, value):
-        self.sum += value
-        self.count += 1
-
-    def compute(self):
-        return self.sum.float() / self.count
 
 
 def main():
@@ -196,7 +183,7 @@ def main_worker(config: ModelConfig):
         scheduler.step()
 
         # remember best acc@1 and save checkpoint
-        is_best = acc1 < best_acc1 # Since we minimize the loss
+        is_best = acc1 < best_acc1  # Since we minimize the loss
         best_acc1 = min(acc1, best_acc1)
 
         if config.global_rank == 0 and config.save_checkpoint:
@@ -214,11 +201,11 @@ def main_worker(config: ModelConfig):
                     # Utils
                     "arch": config.arch,
                     "num_classes": config.num_classes,
-                    "dataset": config.dataset, 
+                    "dataset": config.dataset,
                     "wandb_run_id": wandb.run.id,
                 },
                 is_best,
-                best_acc1
+                best_acc1,
             )
 
 
@@ -391,7 +378,7 @@ if __name__ == "__main__":
         "0.001",
         "--arch",
         "alexnet",
-        "--save_checkpoint"
+        "--save_checkpoint",
     ]
 
     if "WORLD_SIZE" not in os.environ:
