@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import shutil
+import time
 import warnings
 
 import torch
@@ -61,6 +62,8 @@ def main():
     parser.add_argument("--dataset", type=str, default=config.dataset)
     parser.add_argument("--resume", type=str, default=config.resume)
     parser.add_argument("--exp_name", type=str, default=config.exp_group)
+    parser.add_argument("--num_classes", type=int, default=config.num_classes)
+    parser.add_argument("--save_checkpoint", action="store_true", default=config.save_checkpoint)
 
     args = parser.parse_args()
 
@@ -128,10 +131,10 @@ def main_worker(config: ModelConfig):
     model = DistributedDataParallel(model, device_ids=[config.local_rank])
     criterion = nn.CrossEntropyLoss().to(device)
 
-    # TODO: Resume from checkpoint
+    # Resume from checkpoint
     start_epoch = 0
     best_acc1 = 0
-    global_step = 0
+    train_step = 0
     wandb_run_id = None
     if config.resume:
         if config.resume == "latest":
@@ -167,20 +170,29 @@ def main_worker(config: ModelConfig):
         scheduler.step()
 
         # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+        is_best = acc1 < best_acc1 # Since we minimize the loss
+        best_acc1 = min(acc1, best_acc1)
 
-        if config.global_rank == 0:
-            torch.save(
+        if config.global_rank == 0 and config.save_checkpoint:
+            save_checkpoint(
+                config,
                 {
-                    "epoch": epoch + 1,
-                    "arch": config.arch,
-                    "state_dict": model.state_dict(),
+                    # State parameters
+                    "last_epoch": current_epoch,
                     "best_acc1": best_acc1,
+                    "global_train_step": train_step,
+                    # Model parameters
+                    "model_state_dict": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
+                    # Utils
+                    "arch": config.arch,
+                    "num_classes": config.num_classes,
+                    "dataset": config.dataset, 
+                    "wandb_run_id": wandb.run.id,
                 },
-                get_checkpoint(config, epoch + 1),
+                is_best,
+                best_acc1
             )
 
 
@@ -301,18 +313,18 @@ if __name__ == "__main__":
     import sys
 
     sys.argv = [
-        "train.py",  # Program name
+        "train.py",
         "--batch_size",
         "32",
         "--num_epochs",
-        "10",
+        "33",
         "--lr",
         "0.001",
         "--arch",
         "alexnet",
-        "--num_epochs",
-        "1",
+        "--save_checkpoint"
     ]
+
     if "WORLD_SIZE" not in os.environ:
         os.environ["WORLD_SIZE"] = "1"
         os.environ["RANK"] = "0"
