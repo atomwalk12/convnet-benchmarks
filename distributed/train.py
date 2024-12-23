@@ -142,7 +142,30 @@ def main_worker(config: ModelConfig):
         else:
             weights_path = get_checkpoint(config, int(config.resume))
 
-    # TODO: Define wandb logging
+        if weights_path and os.path.isfile(weights_path):
+            print(f"Loading checkpoint from {weights_path}")
+            checkpoint = torch.load(weights_path)
+
+            # Here, I ensure that the 3 categories of parameters are loaded correctly
+            # Training parameters
+            start_epoch = checkpoint["last_epoch"] + 1
+            best_acc1 = checkpoint["best_acc1"]
+            train_step = checkpoint["global_train_step"] + 1
+
+            # Model parameters
+            model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer"])
+            scheduler.load_state_dict(checkpoint["scheduler"])
+
+            # Utils
+            assert config.arch == checkpoint["arch"], "Model architecture mismatch"
+            assert config.num_classes == checkpoint["num_classes"], "Number of classes mismatch"
+            assert config.dataset == checkpoint["dataset"], "Dataset mismatch"
+            wandb_run_id = checkpoint["wandb_run_id"]
+        else:
+            # Can happen if no prior sessions were started
+            print(f"=> no checkpoint found, resuming from scratch...")
+
     # Only initialize W&B on the global rank 0 node
     if config.local_rank == 0:
         wandb.init(
@@ -152,20 +175,23 @@ def main_worker(config: ModelConfig):
             resume="allow",
             group=config.exp_group,
             config=config,
+            mode="offline",
         )
 
     # Evaluate if flag is set
     if config.evaluate:
-        validate(config, val_loader, model, criterion, device, global_step)
+        validate(config, val_loader, model, criterion, device, train_step)
         return
 
-    for epoch in range(start_epoch, config.num_epochs):
+    for current_epoch in range(start_epoch, config.num_epochs):
         torch.cuda.empty_cache()
 
-        train(config, train_loader, model, criterion, optimizer, epoch, device)
+        train_step = train(
+            config, train_loader, model, criterion, optimizer, current_epoch, device, train_step
+        )
 
         if config.global_rank == 0:
-            acc1 = validate(config, val_loader, model, criterion, device, global_step)
+            acc1 = validate(config, val_loader, model, criterion, device, train_step)
 
         scheduler.step()
 
@@ -198,8 +224,8 @@ def main_worker(config: ModelConfig):
 
 def get_dataset(config: ModelConfig):
     if config.dataset == "dummy":
-        train_ds = datasets.FakeData(100, (3, 224, 224), 10, transforms.ToTensor())
-        val_ds = datasets.FakeData(300, (3, 224, 224), 10, transforms.ToTensor())
+        train_ds = datasets.FakeData(100, (3, 224, 224), config.num_classes, transforms.ToTensor())
+        val_ds = datasets.FakeData(300, (3, 224, 224), config.num_classes, transforms.ToTensor())
     elif config.dataset == "tiny-imagenet":
         train_ds = load_dataset("Maysee/tiny-imagenet", split="train")
         val_ds = load_dataset("Maysee/tiny-imagenet", split="valid")
@@ -334,9 +360,16 @@ def validate(config, val_loader, model, criterion, device, global_train_step):
     return results["val_loss"]
 
 
-def save_checkpoint(config, state):
-    checkpoint_path = get_checkpoint(config, state["epoch"])
+def save_checkpoint(config, state, is_best, acc1):
+    # Obtain next checkpoint path
+    checkpoint_path = get_checkpoint(config, state["last_epoch"])
     torch.save(state, checkpoint_path)
+
+    # If this checkpoint is better, save it as the best current model
+    if is_best:
+        path = get_checkpoint(config, state["last_epoch"], is_best=True)
+        print(f"Saving checkpoint {state['last_epoch']} (best - {acc1:.3f}) to {path}")
+        shutil.copyfile(checkpoint_path, path)
 
 
 def load_model(config: ModelConfig, device: torch.device):
