@@ -215,8 +215,12 @@ def get_dataset(config: ModelConfig):
     return train_dataloader, val_dataloader
 
 
-def train(config, train_loader, model, criterion, optimizer, epoch, device):
+def train(config, train_loader, model, criterion, optimizer, epoch, device, global_train_step):
     model.train()
+
+    # Initialize variables to report metrics
+    epoch_start_time = time.time()
+    batch_times = []
 
     batch_it = tqdm(
         train_loader,
@@ -224,12 +228,13 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device):
         disable=config.local_rank != 0,
     )
 
-    for batch in batch_it:
+    for batch_idx, batch in enumerate(batch_it):
+        batch_start_time = time.time()
+
         images, target = batch
         images = images.to(device)
         target = target.to(device)
 
-        # Forward pass
         output = model(images)
         loss = criterion(output, target)
 
@@ -238,16 +243,44 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device):
         loss.backward()
         optimizer.step()
 
-        # Update progress bar with current loss
+        # Measure batch time
+        batch_end_time = time.time()
+        batch_time = batch_end_time - batch_start_time
+        batch_times.append(batch_time)
+
         batch_it.set_postfix(
             {
                 "loss": f"{loss.item():6.3f}",
                 "lr": f'{optimizer.param_groups[0]["lr"]:.1e}',
+                "batch_time": f"{batch_time:.3f}",
             }
         )
 
+        # Log training loss every 100 batches
+        if batch_idx % 3 == 0 and config.global_rank == 0:
+            wandb.log({"train/batch_loss": loss.item()}, step=global_train_step)
+        global_train_step += 1
 
-def validate(config, val_loader, model, criterion, device, global_step):
+    # Calculate metrics
+    epoch_end_time = time.time()
+    epoch_time = epoch_end_time - epoch_start_time
+    avg_batch_time = sum(batch_times) / len(batch_times)
+    throughput_per_second = len(train_loader) / epoch_time
+
+    # Log for one node only
+    if config.global_rank == 0:
+        wandb.log(
+            {
+                "train/epoch_time": epoch_time,
+                "train/avg_step_time": avg_batch_time,
+                "train/throughput_per_second": throughput_per_second,
+            },
+            step=global_train_step,
+        )
+    return global_train_step
+
+
+def validate(config, val_loader, model, criterion, device, global_train_step):
     model.eval()
 
     # Initialize metrics
