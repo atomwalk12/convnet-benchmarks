@@ -286,10 +286,14 @@ def validate(config, val_loader, model, criterion, device, global_train_step):
     # Initialize metrics
     metrics = {
         "val_loss": AverageMeter().to(device),
-        "accuracy": torchmetrics.Accuracy(task="multiclass", num_classes=1000).to(device),
-        "precision": torchmetrics.Precision(task="multiclass", num_classes=1000).to(device),
-        "recall": torchmetrics.Recall(task="multiclass", num_classes=1000).to(device),
-        "f1": torchmetrics.F1Score(task="multiclass", num_classes=1000).to(device),
+        "accuracy": torchmetrics.Accuracy(task="multiclass", num_classes=config.num_classes).to(
+            device
+        ),
+        "precision": torchmetrics.Precision(task="multiclass", num_classes=config.num_classes).to(
+            device
+        ),
+        "recall": torchmetrics.Recall(task="multiclass", num_classes=config.num_classes).to(device),
+        "f1": torchmetrics.F1Score(task="multiclass", num_classes=config.num_classes).to(device),
     }
 
     with torch.no_grad():
@@ -299,15 +303,16 @@ def validate(config, val_loader, model, criterion, device, global_train_step):
             target = target.to(device)
 
             # Forward pass
-            output = model(images)
-            loss = criterion(output, target)
+            output = model(images)  # [batch_size, num_classes]
+            loss = criterion(output, target)  # scalar
 
             # Update metrics
             metrics["val_loss"].update(loss.item())
-            metrics["accuracy"].update(output, target)
-            metrics["precision"].update(output, target)
-            metrics["recall"].update(output, target)
-            metrics["f1"].update(output, target)
+            preds = torch.argmax(output, dim=1)
+            metrics["accuracy"].update(preds, target)
+            metrics["precision"].update(preds, target)
+            metrics["recall"].update(preds, target)
+            metrics["f1"].update(preds, target)
 
     # Compute final metrics
     results = {
@@ -320,14 +325,12 @@ def validate(config, val_loader, model, criterion, device, global_train_step):
 
     # Log metrics if using wandb
     if config.global_rank == 0:
-        wandb.log({f"val/{k}": v for k, v in results.items()}, step=global_step)
+        wandb.log({f"val/{k}": v for k, v in results.items()}, step=global_train_step)
 
-        # Print metrics
         print("\nValidation Results:")
         for k, v in results.items():
             print(f"{k:>10}: {v:.4f}")
 
-    # Return average loss for learning rate scheduling
     return results["val_loss"]
 
 
