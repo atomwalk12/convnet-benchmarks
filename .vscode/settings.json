@@ -39,12 +39,14 @@
         "limits": "cpp"
     },
     "cSpell.words": [
+        "AREPL",
         "gloo",
         "imagenet",
         "Maysee",
         "multiclass",
         "nccl",
         "nnodes",
+        "rdzv",
         "torchrun"
     ]
 }
