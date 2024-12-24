@@ -18,7 +18,7 @@ class ModelConfig:
     resume: str
     exp_group: str
     num_classes: int
-    no_save_checkpoint: bool
+    no_checkpoint: bool
     local_rank: int = -1  # Rank of the local process (gpu) on a single machine
     global_rank: int = -1  # Rank of the global process across the cluster
 
@@ -37,7 +37,7 @@ def get_default_config() -> ModelConfig:
         resume="latest",
         exp_group="exp1_alexnet",
         num_classes=10,
-        no_save_checkpoint=False,
+        no_checkpoint=False,
     )
     config.checkpoint_dir = config.checkpoint_dir.format(arch=config.arch, dataset=config.dataset)
     return config
