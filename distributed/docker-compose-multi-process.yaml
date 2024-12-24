@@ -1,0 +1,18 @@
+services:
+  node0:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    stdin_open: true  # -i
+    tty: true         # -t
+    volumes:
+      - .:/mnt
+    working_dir: /mnt
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
