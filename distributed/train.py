@@ -50,9 +50,7 @@ def main():
     parser.add_argument("--resume", type=str, default=config.resume)
     parser.add_argument("--exp_name", type=str, default=config.exp_group)
     parser.add_argument("--num_classes", type=int, default=config.num_classes)
-    parser.add_argument(
-        "--no_save_checkpoint", action="store_true", default=config.no_save_checkpoint
-    )
+    parser.add_argument("--no_checkpoint", action="store_true", default=config.no_checkpoint)
 
     args = parser.parse_args()
 
@@ -72,11 +70,25 @@ def main():
         for key, value in config.__dict__.items():
             print(f"{key:>20}: {value}")
 
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    master_addr = os.environ["MASTER_ADDR"]
+    master_port = os.environ["MASTER_PORT"]
+
+    # Your distributed training logic here
     if torch.cuda.device_count() > 1:
         init_process_group(backend="nccl")
     else:
         # Use gloo backend for single GPU multi-process setup
-        init_process_group(backend="gloo")
+        init_process_group(
+            backend="gloo",
+            init_method=f"tcp://{master_addr}:{master_port}",
+            rank=rank,
+            world_size=world_size,
+        )
+
+    print(f"Rank {rank}/{world_size} (local rank {local_rank}) connected.")
 
     # Force all processes to use GPU 0 when only one GPU is available
     if torch.cuda.device_count() > 1:
@@ -202,7 +214,7 @@ def main_worker(config: ModelConfig):
         is_best = acc1 < best_acc1  # Since we minimize the loss
         best_acc1 = min(acc1, best_acc1)
 
-        if config.global_rank == 0 and not config.no_save_checkpoint:
+        if config.global_rank == 0 and not config.no_checkpoint:
             save_checkpoint(
                 config,
                 {
@@ -403,10 +415,11 @@ if __name__ == "__main__":
         "0.001",
         "--arch",
         "alexnet",
-        "--no_save_checkpoint",
+        "--no_checkpoint",
     ]
 
     if "WORLD_SIZE" not in os.environ:
+        # Used by AREPL
         print(f"World size is equal to {os.environ['WORLD_SIZE']}")
         os.environ["WORLD_SIZE"] = "1"
         os.environ["RANK"] = "0"
