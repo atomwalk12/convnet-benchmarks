@@ -37,5 +37,11 @@
         "cstdlib": "cpp",
         "random": "cpp",
         "limits": "cpp"
-    }
+    },
+    "cSpell.words": [
+        "imagenet",
+        "Maysee",
+        "multiclass",
+        "nccl"
+    ]
 }

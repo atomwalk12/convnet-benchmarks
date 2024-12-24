@@ -12,8 +12,7 @@ import torchmetrics
 import torchvision.datasets as datasets
 import torchvision.models as models
 import wandb
-from config import (ModelConfig, get_checkpoint, get_default_config,
-                    get_latest_checkpoint)
+from config import ModelConfig, get_checkpoint, get_default_config, get_latest_checkpoint
 from dataset import AverageMeter, ImageNetDataset
 from datasets import load_dataset
 from torch.distributed import destroy_process_group, init_process_group
