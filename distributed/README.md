@@ -9,11 +9,11 @@ Run the following command to setup the environment:
 docker-compose -f docker-compose-multi-process.yaml up -d
 
 # Enter the container and login to wandb
-docker-compose -f docker-compose-multi-process.yaml exec node0 bash
+docker-compose -f docker-compose-multi-process.yaml exec node bash
 wandb login
 
 # Single node, simulate two GPUs using two processes
-torchrun --nnodes=1 --nproc_per_node=2 --rdzv_id=456 --rdzv_backend=c10d --rdzv_endpoint=node0:48123 train.py --no_checkpoint
+torchrun --nnodes=1 --nproc_per_node=2 --rdzv_id=456 --rdzv_backend=c10d --rdzv_endpoint=node:48123 train.py --no_checkpoint
 ```
 
 For distributed training:

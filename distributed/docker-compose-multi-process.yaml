@@ -1,14 +1,17 @@
 services:
-  node0:
+  node:
     build:
       context: .
       dockerfile: Dockerfile
-    stdin_open: true  # -i
-    tty: true         # -t
+    stdin_open: true
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - MASTER_ADDR=node
+      - MASTER_PORT=48123
     volumes:
       - .:/mnt
     working_dir: /mnt
-    network_mode: host
     deploy:
       resources:
         reservations:
@@ -16,3 +19,12 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    networks:
+      distributed-net:
+        aliases:
+          - node
+    hostname: node
+
+networks:
+  distributed-net:
+    driver: bridge
