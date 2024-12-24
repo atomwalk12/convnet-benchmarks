@@ -249,7 +249,8 @@ def get_dataset(config: ModelConfig):
 
     train_ds = ImageNetDataset(train_ds)
     val_ds = ImageNetDataset(val_ds)
-
+    
+    # Need to use distributed sampler else we get deadlocks
     train_dataloader = DataLoader(
         train_ds,
         batch_size=config.batch_size,
@@ -418,9 +419,9 @@ if __name__ == "__main__":
         "--no_checkpoint",
     ]
 
-    if "WORLD_SIZE" not in os.environ:
-        # Used by AREPL
-        print(f"World size is equal to {os.environ['WORLD_SIZE']}")
+    # This can happen if running the code using AREPL
+    if "WORLD_SIZE" not in os.environ:    
+        # Note that WORLD_SIZE=<nodes-in-cluster>*<gpus/processes-per-node>
         os.environ["WORLD_SIZE"] = "1"
         os.environ["RANK"] = "0"
         os.environ["LOCAL_RANK"] = "0"
