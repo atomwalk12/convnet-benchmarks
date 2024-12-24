@@ -39,9 +39,12 @@
         "limits": "cpp"
     },
     "cSpell.words": [
+        "gloo",
         "imagenet",
         "Maysee",
         "multiclass",
-        "nccl"
+        "nccl",
+        "nnodes",
+        "torchrun"
     ]
 }

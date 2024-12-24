@@ -4,6 +4,7 @@ import random
 import shutil
 import time
 import warnings
+import wandb
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -11,7 +12,6 @@ import torch.nn as nn
 import torchmetrics
 import torchvision.datasets as datasets
 import torchvision.models as models
-import wandb
 from config import ModelConfig, get_checkpoint, get_default_config, get_latest_checkpoint
 from dataset import AverageMeter, ImageNetDataset
 from datasets import load_dataset
@@ -19,6 +19,7 @@ from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -49,7 +50,9 @@ def main():
     parser.add_argument("--resume", type=str, default=config.resume)
     parser.add_argument("--exp_name", type=str, default=config.exp_group)
     parser.add_argument("--num_classes", type=int, default=config.num_classes)
-    parser.add_argument("--save_checkpoint", action="store_true", default=config.save_checkpoint)
+    parser.add_argument(
+        "--no_save_checkpoint", action="store_true", default=config.no_save_checkpoint
+    )
 
     args = parser.parse_args()
 
@@ -69,9 +72,17 @@ def main():
         for key, value in config.__dict__.items():
             print(f"{key:>20}: {value}")
 
-    # Setup distributed training
-    init_process_group(backend="nccl")
-    torch.cuda.set_device(config.local_rank)
+    if torch.cuda.device_count() > 1:
+        init_process_group(backend="nccl")
+    else:
+        # Use gloo backend for single GPU multi-process setup
+        init_process_group(backend="gloo")
+
+    # Force all processes to use GPU 0 when only one GPU is available
+    if torch.cuda.device_count() > 1:
+        torch.cuda.set_device(config.local_rank)
+    else:
+        torch.cuda.set_device(0)
 
     set_seed(config)
     main_worker(config)
@@ -114,13 +125,19 @@ def main_worker(config: ModelConfig):
     # LR decays by 10% every 30 epochs
     scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
 
-    model = DistributedDataParallel(model, device_ids=[config.local_rank])
+    if torch.cuda.device_count() > 1:
+        model = DistributedDataParallel(model, device_ids=[config.local_rank])
+    else:
+        # For single GPU, all processes use device 0
+        model = DistributedDataParallel(model, device_ids=[0])
+
     criterion = nn.CrossEntropyLoss().to(device)
 
     # Resume from checkpoint
     start_epoch = 0
-    best_acc1 = 0
+    best_acc1 = 0.0
     train_step = 0
+    acc1 = 0.0
     wandb_run_id = None
     if config.resume:
         if config.resume == "latest":
@@ -185,7 +202,7 @@ def main_worker(config: ModelConfig):
         is_best = acc1 < best_acc1  # Since we minimize the loss
         best_acc1 = min(acc1, best_acc1)
 
-        if config.global_rank == 0 and config.save_checkpoint:
+        if config.global_rank == 0 and not config.no_save_checkpoint:
             save_checkpoint(
                 config,
                 {
@@ -221,8 +238,13 @@ def get_dataset(config: ModelConfig):
     train_ds = ImageNetDataset(train_ds)
     val_ds = ImageNetDataset(val_ds)
 
-    train_dataloader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
-    val_dataloader = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False)
+    train_dataloader = DataLoader(
+        train_ds,
+        batch_size=config.batch_size,
+        shuffle=False,
+        sampler=DistributedSampler(train_ds, shuffle=True),
+    )
+    val_dataloader = DataLoader(val_ds, batch_size=config.batch_size, shuffle=True)
 
     return train_dataloader, val_dataloader
 
@@ -295,17 +317,21 @@ def train(config, train_loader, model, criterion, optimizer, epoch, device, glob
 def validate(config, val_loader, model, criterion, device, global_train_step):
     model.eval()
 
-    # Initialize metrics
+    # Initialize metrics with sync_on_compute=False to prevent hanging
     metrics = {
-        "val_loss": AverageMeter().to(device),
-        "accuracy": torchmetrics.Accuracy(task="multiclass", num_classes=config.num_classes).to(
-            device
-        ),
-        "precision": torchmetrics.Precision(task="multiclass", num_classes=config.num_classes).to(
-            device
-        ),
-        "recall": torchmetrics.Recall(task="multiclass", num_classes=config.num_classes).to(device),
-        "f1": torchmetrics.F1Score(task="multiclass", num_classes=config.num_classes).to(device),
+        "val_loss": AverageMeter(sync_on_compute=False).to(device),
+        "accuracy": torchmetrics.Accuracy(
+            task="multiclass", num_classes=config.num_classes, sync_on_compute=False
+        ).to(device),
+        "precision": torchmetrics.Precision(
+            task="multiclass", num_classes=config.num_classes, sync_on_compute=False
+        ).to(device),
+        "recall": torchmetrics.Recall(
+            task="multiclass", num_classes=config.num_classes, sync_on_compute=False
+        ).to(device),
+        "f1": torchmetrics.F1Score(
+            task="multiclass", num_classes=config.num_classes, sync_on_compute=False
+        ).to(device),
     }
 
     with torch.no_grad():
@@ -337,7 +363,7 @@ def validate(config, val_loader, model, criterion, device, global_train_step):
 
     # Log metrics if using wandb
     if config.global_rank == 0:
-        wandb.log({f"val/{k}": v for k, v in results.items()}, step=global_train_step)
+        wandb.log({f"val/{k}": v for k, v in results.items()}, step=global_train_step, sync=False)
 
         print("\nValidation Results:")
         for k, v in results.items():
@@ -377,10 +403,11 @@ if __name__ == "__main__":
         "0.001",
         "--arch",
         "alexnet",
-        "--save_checkpoint",
+        "--no_save_checkpoint",
     ]
 
     if "WORLD_SIZE" not in os.environ:
+        print(f"World size is equal to {os.environ['WORLD_SIZE']}")
         os.environ["WORLD_SIZE"] = "1"
         os.environ["RANK"] = "0"
         os.environ["LOCAL_RANK"] = "0"

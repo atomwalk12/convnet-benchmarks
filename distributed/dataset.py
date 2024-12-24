@@ -15,8 +15,8 @@ class ImageNetDataset:
 
 
 class AverageMeter(torchmetrics.Metric):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, sync_on_compute=False):
+        super().__init__(sync_on_compute=sync_on_compute)
         self.add_state("sum", default=torch.tensor(0.0), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
